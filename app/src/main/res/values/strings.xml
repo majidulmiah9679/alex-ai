@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Alex AI</string>
+    <string name="accessibility_service_description">Alex AI Visual Agent allows Alex to read screen context, prepare messages, and navigate social apps with your explicit confirmation.</string>
+</resources>

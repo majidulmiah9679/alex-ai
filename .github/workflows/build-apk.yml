@@ -1,0 +1,67 @@
+name: Build Alex AI Native Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Native Android APKs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build Direct Flavor APK (Full Visual Agent & Device Automation)
+        run: ./gradlew assembleDirectDebug --stacktrace
+
+      - name: Build Store Flavor APK (Play Store Compliant)
+        run: ./gradlew assembleStoreDebug --stacktrace
+
+      - name: Locate Generated APKs
+        run: |
+          mkdir -p build-output
+          find app/build/outputs/apk -name "*.apk" -exec cp {} build-output/ \;
+          ls -la build-output/
+
+      - name: Upload Direct Flavor APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: alex-ai-direct-debug
+          path: build-output/*direct-debug.apk
+          if-no-files-found: error
+
+      - name: Upload Store Flavor APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: alex-ai-store-debug
+          path: build-output/*store-debug.apk
+          if-no-files-found: error
+
+      - name: Create GitHub Release (On Tag or Manual Dispatch)
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build-output/*.apk
+          draft: false
+          prerelease: false
+          name: "Alex AI Companion v1.0.0"
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
