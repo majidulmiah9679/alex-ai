@@ -36,7 +36,9 @@ fun SettingsScreen(
     noiseSuppressorEnabled: Boolean,
     onToggleNoiseSuppressor: (Boolean) -> Unit,
     edgeGlowEnabled: Boolean,
-    onToggleEdgeGlow: (Boolean) -> Unit
+    onToggleEdgeGlow: (Boolean) -> Unit,
+    onOpenAccessibilitySettings: () -> Unit = {},
+    onOpenRestrictedSettings: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
 
@@ -156,6 +158,75 @@ fun SettingsScreen(
                         )
                     }
                     Icon(Icons.Default.ChevronRight, contentDescription = null, tint = MarigoldAccent)
+                }
+            }
+
+            // Accessibility & Android 13/14 Restricted Settings Bypass HUD
+            val isRunning = com.alex.ai.accessibility.AlexAccessibilityService.isRunning()
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = if (isRunning) Color(0xFF064E3B) else Color(0xFF1E2856),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (isRunning) Color(0xFF10B981) else MarigoldAccent
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = if (isRunning) "✓ ACCESSIBILITY AUTOMATION ACTIVE" else "⚡ ACCESSIBILITY & BYPASS AUTOMATION",
+                        color = if (isRunning) Color(0xFF34D399) else MarigoldAccent,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 0.5.sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    if (isRunning) {
+                        Text(
+                            text = "অ্যাক্সেসিবিলিটি রানিং আছে! স্ক্রিন ক্লিক, স্ক্রোল, ব্যাক, হোম এবং সব অ্যাপ ফুল অটোমেশন রেডি।",
+                            color = Color(0xFFD1FAE5),
+                            fontSize = 12.sp
+                        )
+                    } else {
+                        Text(
+                            text = "Android 13/14+ এ সেটিংস অন না হলে বা ধূসর (greyed out) থাকলে:\n১. 'বাইপাস সেটিংস' চাপুন -> ৩-ডট (⋮) এ গিয়ে 'Allow restricted settings' সিলেক্ট করে ফিঙ্গারপ্রিন্ট দিন।\n২. 'অ্যাক্সেসিবিলিটি' চাপুন এবং Alex AI অন করুন।",
+                            color = Color(0xFF93C5FD),
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = onOpenRestrictedSettings,
+                                colors = ButtonDefaults.buttonColors(containerColor = MarigoldAccent),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    text = "১. বাইপাস সেটিংস",
+                                    color = DeepIndigoNight,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = onOpenAccessibilitySettings,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E676)),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    text = "২. অ্যাক্সেসিবিলিটি",
+                                    color = Color(0xFF00E676),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
                 }
             }
 

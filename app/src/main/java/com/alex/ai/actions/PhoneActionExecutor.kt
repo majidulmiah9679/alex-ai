@@ -96,6 +96,23 @@ class PhoneActionExecutor(private val context: Context) {
                 "get_storage_status" -> getStorageStatus()
                 "get_device_specs" -> getDeviceSpecs()
 
+                // In-App Gestures & Autonomous Accessibility
+                "click_screen", "screen_tap_text", "click_element" -> {
+                    val target = args?.get("target")?.jsonPrimitive?.content ?: args?.get("text")?.jsonPrimitive?.content ?: ""
+                    clickOnScreen(target)
+                }
+                "scroll_screen", "screen_scroll" -> {
+                    val direction = args?.get("direction")?.jsonPrimitive?.content ?: "down"
+                    scrollScreen(direction)
+                }
+                "go_back" -> goBack()
+                "go_home" -> goHome()
+                "open_recents", "recent_apps" -> openRecentApps()
+                "open_notifications" -> openNotifications()
+                "open_quick_settings" -> openQuickSettings()
+                "open_accessibility_settings" -> openAccessibilitySettings()
+                "open_app_details", "allow_restricted_settings" -> openAppDetailsSettings()
+
                 else -> ActionResult(false, "Unknown action: $actionName")
             }
         } catch (e: Exception) {
@@ -170,25 +187,31 @@ class PhoneActionExecutor(private val context: Context) {
 
         val directPackage = when {
             query.contains("youtube") || query.contains("ইউটিউব") || query == "yt" -> "com.google.android.youtube"
-            query.contains("whatsapp") || query.contains("হোয়াটসঅ্যাপ") || query == "wa" -> "com.whatsapp"
+            query.contains("whatsapp") || query.contains("হোয়াটসঅ্যাপ") || query.contains("ওয়াটসঅ্যাপ") || query == "wa" -> "com.whatsapp"
             query.contains("facebook") || query.contains("ফেসবুক") || query == "fb" -> "com.facebook.katana"
-            query.contains("instagram") || query.contains("ইনস্টাগ্রাম") || query.contains("insta") -> "com.instagram.android"
+            query.contains("instagram") || query.contains("ইনস্টাগ্রাম") || query.contains("ইন্সটাগ্রাম") || query.contains("insta") -> "com.instagram.android"
+            query.contains("tiktok") || query.contains("টিকটক") -> "com.zhiliaoapp.musically"
+            query.contains("messenger") || query.contains("মেসেঞ্জার") -> "com.facebook.orca"
+            query.contains("snapchat") || query.contains("স্ন্যাপচ্যাট") -> "com.snapchat.android"
+            query.contains("bkash") || query.contains("বিকাশ") -> "com.bKash.customerapp"
+            query.contains("nagad") || query.contains("নগদ") -> "com.konasl.nagad"
+            query.contains("rocket") || query.contains("রকেট") -> "com.dbbl.mbs.apps.holder"
             query.contains("chrome") || query.contains("ক্রোম") || query == "browser" -> "com.android.chrome"
-            query.contains("spotify") || query.contains("স্পটিফাই") -> "com.spotify.music"
+            query.contains("spotify") || query.contains("স্পটিফাই") || query.contains("গান") -> "com.spotify.music"
             query.contains("telegram") || query.contains("টেলিগ্রাম") -> "org.telegram.messenger"
             query.contains("map") || query.contains("ম্যাপ") -> "com.google.android.apps.maps"
-            query.contains("play store") || query.contains("প্লে স্টোর") -> "com.android.vending"
+            query.contains("play store") || query.contains("প্লে স্টোর") || query.contains("প্লেস্টোর") -> "com.android.vending"
             query.contains("calculator") || query.contains("ক্যালকুলেটর") -> "com.google.android.calculator"
-            query.contains("gmail") || query.contains("ইমেইল") -> "com.google.android.gm"
-            query.contains("clock") || query.contains("ঘড়ি") || query.contains("alarm") -> "com.google.android.deskclock"
+            query.contains("gmail") || query.contains("ইমেইল") || query.contains("জিমেইল") -> "com.google.android.gm"
+            query.contains("clock") || query.contains("ঘড়ি") || query.contains("ঘড়ি") || query.contains("alarm") || query.contains("অ্যালার্ম") -> "com.google.android.deskclock"
             query.contains("file") || query.contains("ফাইল") -> "com.google.android.apps.nbu.files"
             query.contains("drive") || query.contains("ড্রাইভ") -> "com.google.android.apps.docs"
-            query.contains("twitter") || query == "x" -> "com.twitter.android"
-            query.contains("netflix") -> "com.netflix.mediaclient"
+            query.contains("twitter") || query == "x" || query.contains("টুইটার") -> "com.twitter.android"
+            query.contains("netflix") || query.contains("নেটফ্লিক্স") -> "com.netflix.mediaclient"
             query.contains("prime") -> "com.amazon.avod.thirdpartyclient"
             query.contains("hotstar") -> "in.startv.hotstar"
             query.contains("truecaller") -> "com.truecaller"
-            query.contains("uber") -> "com.ubercab"
+            query.contains("uber") || query.contains("pathao") || query.contains("পাঠাও") -> "com.ubercab"
             query.contains("swiggy") -> "in.swiggy.android"
             query.contains("zomato") -> "com.application.zomato"
             else -> null
@@ -349,6 +372,27 @@ class PhoneActionExecutor(private val context: Context) {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
         return tryLaunch(intent, "Accessibility Settings")
+    }
+
+    fun openAppDetailsSettings(): ActionResult {
+        return try {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:" + context.packageName)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+            ActionResult(true, "App Info khulchhi. 3-dot (⋮) a giye 'Allow restricted settings' select korun.")
+        } catch (e: Exception) {
+            ActionResult(false, "Could not open App Info: ${e.message}")
+        }
+    }
+
+    fun openQuickSettings(): ActionResult {
+        val service = com.alex.ai.accessibility.AlexAccessibilityService.instance
+        if (service != null && service.openQuickSettings()) {
+            return ActionResult(true, "Quick Settings khulchhi!")
+        }
+        return openSettings("general")
     }
 
     // --- Hardware Controls ---

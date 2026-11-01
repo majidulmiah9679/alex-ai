@@ -23,7 +23,15 @@ class AlexAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        Log.d(tag, "Alex Visual Agent Accessibility Service connected")
+        val info = serviceInfo ?: android.accessibilityservice.AccessibilityServiceInfo()
+        info.eventTypes = AccessibilityEvent.TYPES_ALL_MASK
+        info.feedbackType = android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_GENERIC
+        info.flags = info.flags or
+            android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+            android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+            android.accessibilityservice.AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+        serviceInfo = info
+        Log.d(tag, "Alex Visual Agent Accessibility Service connected & configured")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {

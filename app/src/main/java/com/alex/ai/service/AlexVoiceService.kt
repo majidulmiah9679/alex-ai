@@ -522,6 +522,14 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
                     val res = phoneActionExecutor.makeCall("")
                     actionMsg = "Dialer open korchhi!"
                 }
+                lower.contains("accessibility") || lower.contains("অ্যাক্সেসিবিলিটি") -> {
+                    val res = phoneActionExecutor.openAccessibilitySettings()
+                    actionMsg = res.message
+                }
+                lower.contains("restricted") || lower.contains("রিস্ট্রিক্টেড") -> {
+                    val res = phoneActionExecutor.openAppDetailsSettings()
+                    actionMsg = res.message
+                }
                 lower.contains("website") || lower.contains("forge") || lower.contains("ওয়েবসাইট") || lower.contains("cafe") -> {
                     ForgeController.instance.startWebsiteBuild(spokenText)
                     _sessionState.value = _sessionState.value.copy(activeWebsiteBuildTopic = spokenText)

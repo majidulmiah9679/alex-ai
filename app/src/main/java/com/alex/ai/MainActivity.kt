@@ -324,7 +324,9 @@ class MainActivity : ComponentActivity() {
                                     batteryStatus = remember { phoneActionExecutor.getBatteryStatus().message },
                                     ramStatus = remember { phoneActionExecutor.getRamStatus().message },
                                     storageStatus = remember { phoneActionExecutor.getStorageStatus().message },
-                                    deviceSpecs = remember { phoneActionExecutor.getDeviceSpecs().message }
+                                    deviceSpecs = remember { phoneActionExecutor.getDeviceSpecs().message },
+                                    onOpenAccessibilitySettings = { phoneActionExecutor.openAccessibilitySettings() },
+                                    onOpenRestrictedSettings = { phoneActionExecutor.openAppDetailsSettings() }
                                 )
                             }
 
@@ -352,7 +354,9 @@ class MainActivity : ComponentActivity() {
                                     noiseSuppressorEnabled = noiseSuppressorEnabled,
                                     onToggleNoiseSuppressor = { scope.launch { settingsRepo.setNoiseSuppressor(it) } },
                                     edgeGlowEnabled = edgeGlowEnabled,
-                                    onToggleEdgeGlow = { scope.launch { settingsRepo.setEdgeGlow(it) } }
+                                    onToggleEdgeGlow = { scope.launch { settingsRepo.setEdgeGlow(it) } },
+                                    onOpenAccessibilitySettings = { phoneActionExecutor.openAccessibilitySettings() },
+                                    onOpenRestrictedSettings = { phoneActionExecutor.openAppDetailsSettings() }
                                 )
                             }
                         }
