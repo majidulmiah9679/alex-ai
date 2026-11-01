@@ -241,8 +241,9 @@ class PhoneActionExecutor(private val context: Context) {
         try {
             val installedApps = pm.getInstalledApplications(0)
             val matchedApp = installedApps.firstOrNull { appInfo ->
-                val label = pm.getApplicationLabel(appInfo).toString().lowercase()
-                label.contains(query) || appInfo.packageName.lowercase().contains(query)
+                val label = pm.getApplicationLabel(appInfo).toString().lowercase().trim()
+                val pkg = appInfo.packageName.lowercase()
+                label == query || label.contains(query) || (query.isNotBlank() && query.contains(label)) || pkg.contains(query)
             }
             if (matchedApp != null) {
                 val launchIntent = pm.getLaunchIntentForPackage(matchedApp.packageName)
@@ -250,7 +251,7 @@ class PhoneActionExecutor(private val context: Context) {
                     launchIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
                     context.startActivity(launchIntent)
                     val label = pm.getApplicationLabel(matchedApp).toString()
-                    return ActionResult(true, "Opened $label")
+                    return ActionResult(true, "$label khulchhi, Sir!")
                 }
             }
         } catch (e: Exception) {
@@ -261,6 +262,93 @@ class PhoneActionExecutor(private val context: Context) {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
         return tryLaunch(searchIntent, "Play Store for $appName")
+    }
+
+    fun cleanAppQuery(raw: String): String {
+        var q = raw.lowercase().trim()
+        val removeWords = listOf(
+            "kholo", "khulbe", "khol", "khulo", "chalao", "open", "launch", "start",
+            "khule daw", "khule dao", "chalaw", "খোল", "খুলবে", "খোলো", "চালাও", "অন করো", "খুলে দাও"
+        )
+        for (w in removeWords) {
+            q = q.replace(w, "").trim()
+        }
+        return q
+    }
+
+    // --- In-App Visual Agent Actions (Click, Scroll, Back, Home, Recents) ---
+
+    fun clickOnScreen(targetText: String): ActionResult {
+        val service = com.alex.ai.accessibility.AlexAccessibilityService.instance
+        if (service == null) {
+            openAccessibilitySettings()
+            return ActionResult(false, "Accessibility permission proyojon. Settings khulchhi!")
+        }
+        val success = service.clickElement(targetText)
+        return if (success) {
+            ActionResult(true, "'$targetText'-e click korechhi!")
+        } else {
+            ActionResult(false, "'$targetText' screen-e khuje paini.")
+        }
+    }
+
+    fun scrollScreen(direction: String): ActionResult {
+        val service = com.alex.ai.accessibility.AlexAccessibilityService.instance
+        if (service == null) {
+            openAccessibilitySettings()
+            return ActionResult(false, "Accessibility permission proyojon. Settings khulchhi!")
+        }
+        val success = when (direction.lowercase().trim()) {
+            "up", "উপরে" -> service.scrollUp()
+            "left", "বামে" -> service.swipeLeft()
+            "right", "ডানে" -> service.swipeRight()
+            else -> service.scrollDown()
+        }
+        return ActionResult(success, if (success) "Scroll korechhi!" else "Scroll failed.")
+    }
+
+    fun goBack(): ActionResult {
+        val service = com.alex.ai.accessibility.AlexAccessibilityService.instance
+        if (service != null && service.goBack()) {
+            return ActionResult(true, "Back-e gechhi, Sir!")
+        }
+        return ActionResult(false, "Accessibility permission proyojon.")
+    }
+
+    fun goHome(): ActionResult {
+        val service = com.alex.ai.accessibility.AlexAccessibilityService.instance
+        if (service != null && service.goHome()) {
+            return ActionResult(true, "Home screen-e gechhi!")
+        }
+        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_HOME)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        context.startActivity(homeIntent)
+        return ActionResult(true, "Home screen-e gechhi!")
+    }
+
+    fun openRecentApps(): ActionResult {
+        val service = com.alex.ai.accessibility.AlexAccessibilityService.instance
+        if (service != null && service.openRecents()) {
+            return ActionResult(true, "Recent apps dekhachhi!")
+        }
+        return ActionResult(false, "Accessibility permission proyojon.")
+    }
+
+    fun openNotifications(): ActionResult {
+        val service = com.alex.ai.accessibility.AlexAccessibilityService.instance
+        if (service != null && service.openNotifications()) {
+            return ActionResult(true, "Notification bar namiechhi!")
+        }
+        return ActionResult(false, "Accessibility permission proyojon.")
+    }
+
+    fun openAccessibilitySettings(): ActionResult {
+        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        return tryLaunch(intent, "Accessibility Settings")
     }
 
     // --- Hardware Controls ---

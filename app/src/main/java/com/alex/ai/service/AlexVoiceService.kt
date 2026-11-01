@@ -287,6 +287,12 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
         if (!isSessionDesired) return
 
         serviceScope.launch(Dispatchers.Main) {
+            // Anti-Self-Talk Barrier: Never start listening if speaker is active!
+            if (audioEngine?.isSpeakerPlaying() == true || mediaPlayer?.isPlaying == true || textToSpeech?.isSpeaking == true) {
+                Log.d(tag, "Alex speaker active: speech listener paused")
+                return@launch
+            }
+
             try {
                 if (speechRecognizer == null) {
                     if (!SpeechRecognizer.isRecognitionAvailable(this@AlexVoiceService)) {
@@ -315,7 +321,7 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
 
                 speechRecognizer?.setRecognitionListener(object : RecognitionListener {
                     override fun onReadyForSpeech(params: Bundle?) {
-                        Log.d(tag, "SpeechRecognizer ready for speech")
+                        Log.d(tag, "SpeechRecognizer ready for user speech")
                     }
 
                     override fun onBeginningOfSpeech() {
@@ -335,10 +341,13 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
 
                     override fun onError(error: Int) {
                         _sessionState.value = _sessionState.value.copy(micAmplitude = 0f)
-                        if (isSessionDesired && isUsingFallbackEngine) {
+                        // Anti-Self-Talk: Do NOT restart listening if Alex is speaking!
+                        if (isSessionDesired && isUsingFallbackEngine && audioEngine?.isSpeakerPlaying() == false) {
                             serviceScope.launch {
-                                delay(600)
-                                startListeningContinuous()
+                                delay(800)
+                                if (audioEngine?.isSpeakerPlaying() == false) {
+                                    startListeningContinuous()
+                                }
                             }
                         }
                     }
@@ -346,10 +355,27 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
                     override fun onResults(results: Bundle?) {
                         _sessionState.value = _sessionState.value.copy(micAmplitude = 0f)
                         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        val spokenText = matches?.firstOrNull() ?: ""
+                        val spokenText = matches?.firstOrNull()?.trim() ?: ""
+
                         if (spokenText.isNotBlank()) {
+                            // Self-Echo Discard Gate:
+                            val lastModel = _sessionState.value.lastModelText.lowercase().trim()
+                            val heard = spokenText.lowercase().trim()
+                            if (lastModel.isNotBlank() && (lastModel.contains(heard) || heard.contains(lastModel))) {
+                                Log.w(tag, "Self-speech echo detected and discarded: '$spokenText'")
+                                serviceScope.launch {
+                                    delay(800)
+                                    if (audioEngine?.isSpeakerPlaying() == false) {
+                                        startListeningContinuous()
+                                    }
+                                }
+                                return
+                            }
+
+                            // Legitimate user speech: stop speech recognizer immediately
+                            stopSpeechRecognizer()
                             processSpokenVoiceInput(spokenText)
-                        } else if (isSessionDesired && isUsingFallbackEngine) {
+                        } else if (isSessionDesired && isUsingFallbackEngine && audioEngine?.isSpeakerPlaying() == false) {
                             startListeningContinuous()
                         }
                     }
@@ -387,24 +413,77 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
         serviceScope.launch {
             val lower = spokenText.lowercase().trim()
 
-            // 1. Direct Local Automation Routing
+            // 1. Direct Local & In-App Automation Routing
             var actionMsg: String? = null
             when {
-                lower.contains("youtube") || lower.contains("ইউটিউব") -> {
-                    val res = phoneActionExecutor.openApp("youtube")
-                    actionMsg = if (res.success) "YouTube khulchhi, Sir!" else res.message
+                // In-App Navigation: Back
+                lower == "back" || lower.contains("back jao") || lower.contains("পিছনে যাও") || lower.contains("ব্যাকে যাও") || lower == "go back" -> {
+                    val res = phoneActionExecutor.goBack()
+                    actionMsg = res.message
                 }
-                lower.contains("whatsapp") || lower.contains("হোয়াটসঅ্যাপ") -> {
-                    val res = phoneActionExecutor.openWhatsApp()
-                    actionMsg = if (res.success) "WhatsApp khulchhi!" else res.message
+                // In-App Navigation: Home
+                lower == "home" || lower.contains("home jao") || lower.contains("হোম") || lower.contains("হোমে যাও") || lower == "go home" -> {
+                    val res = phoneActionExecutor.goHome()
+                    actionMsg = res.message
                 }
-                lower.contains("camera") || lower.contains("ক্যামেরা") -> {
-                    val res = phoneActionExecutor.openApp("camera")
-                    actionMsg = if (res.success) "Camera open korchhi!" else res.message
+                // In-App Navigation: Recent Apps
+                lower.contains("recent") || lower.contains("রিসেন্ট") -> {
+                    val res = phoneActionExecutor.openRecentApps()
+                    actionMsg = res.message
                 }
+                // In-App Navigation: Notification Bar
+                lower.contains("notification") || lower.contains("নোটিফিকেশন") -> {
+                    val res = phoneActionExecutor.openNotifications()
+                    actionMsg = res.message
+                }
+                // In-App Gestures: Scroll Down
+                lower.contains("scroll down") || lower.contains("niche scroll") || lower.contains("নিচে স্ক্রোল") || lower.contains("নিচে যাও") -> {
+                    val res = phoneActionExecutor.scrollScreen("down")
+                    actionMsg = res.message
+                }
+                // In-App Gestures: Scroll Up
+                lower.contains("scroll up") || lower.contains("upore scroll") || lower.contains("উপরে স্ক্রোল") || lower.contains("উপরে যাও") -> {
+                    val res = phoneActionExecutor.scrollScreen("up")
+                    actionMsg = res.message
+                }
+                // In-App Gestures: Swipe Left / Right
+                lower.contains("swipe left") || lower.contains("বামে সোয়াইপ") -> {
+                    val res = phoneActionExecutor.scrollScreen("left")
+                    actionMsg = res.message
+                }
+                lower.contains("swipe right") || lower.contains("ডানে সোয়াইপ") -> {
+                    val res = phoneActionExecutor.scrollScreen("right")
+                    actionMsg = res.message
+                }
+                // In-App Action: Click Element by Text / ID
+                lower.startsWith("click ") || lower.contains("click karo") || lower.contains("ক্লিক করো") || lower.contains("ট্যাপ করো") -> {
+                    val target = lower.replace("click karo", "")
+                        .replace("ক্লিক করো", "")
+                        .replace("ট্যাপ করো", "")
+                        .replace("click", "")
+                        .trim()
+                    val res = phoneActionExecutor.clickOnScreen(target)
+                    actionMsg = res.message
+                }
+                // Hardware: Flashlight
                 lower.contains("flashlight") || lower.contains("torch") || lower.contains("টর্চ") -> {
                     val enable = !lower.contains("off") && !lower.contains("বন্ধ")
                     val res = phoneActionExecutor.toggleFlashlight(enable)
+                    actionMsg = res.message
+                }
+                // Hardware: Volume Controls
+                lower.contains("volume") || lower.contains("ভলিউম") || lower.contains("awaaz") -> {
+                    val dir = if (lower.contains("down") || lower.contains("কম")) "down" else if (lower.contains("mute")) "mute" else if (lower.contains("full") || lower.contains("max")) "max" else "up"
+                    val res = phoneActionExecutor.controlVolume(dir)
+                    actionMsg = res.message
+                }
+                // Hardware: Settings toggles
+                lower.contains("wifi") || lower.contains("ওয়াইফাই") -> {
+                    val res = phoneActionExecutor.openSettings("wifi")
+                    actionMsg = res.message
+                }
+                lower.contains("bluetooth") || lower.contains("ব্লুটুথ") -> {
+                    val res = phoneActionExecutor.openSettings("bluetooth")
                     actionMsg = res.message
                 }
                 lower.contains("battery") || lower.contains("ব্যাটারি") || lower.contains("charge") -> {
@@ -431,19 +510,6 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
                     val res = phoneActionExecutor.setTimer(300, "Alex JARVIS Timer")
                     actionMsg = res.message
                 }
-                lower.contains("volume") || lower.contains("ভলিউম") || lower.contains("awaaz") -> {
-                    val dir = if (lower.contains("down") || lower.contains("কম")) "down" else if (lower.contains("mute")) "mute" else if (lower.contains("full") || lower.contains("max")) "max" else "up"
-                    val res = phoneActionExecutor.controlVolume(dir)
-                    actionMsg = res.message
-                }
-                lower.contains("wifi") || lower.contains("ওয়াইফাই") -> {
-                    val res = phoneActionExecutor.openSettings("wifi")
-                    actionMsg = res.message
-                }
-                lower.contains("bluetooth") || lower.contains("ব্লুটুথ") -> {
-                    val res = phoneActionExecutor.openSettings("bluetooth")
-                    actionMsg = res.message
-                }
                 lower.contains("navigate") || lower.contains("hospital") || lower.contains("restaurant") || lower.contains("ম্যাপ") -> {
                     val res = phoneActionExecutor.navigateMaps(spokenText)
                     actionMsg = res.message
@@ -460,6 +526,12 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
                     ForgeController.instance.startWebsiteBuild(spokenText)
                     _sessionState.value = _sessionState.value.copy(activeWebsiteBuildTopic = spokenText)
                     actionMsg = "3D Website Forge reactor core ready korchhi!"
+                }
+                // Universal Dynamic App Launch (Opens ANY App)
+                lower.contains("kholo") || lower.contains("open") || lower.contains("খুলবে") || lower.contains("খোল") || lower.contains("খোলো") || lower.contains("chalao") -> {
+                    val cleanApp = phoneActionExecutor.cleanAppQuery(lower)
+                    val res = phoneActionExecutor.openApp(cleanApp)
+                    actionMsg = res.message
                 }
             }
 
@@ -534,8 +606,10 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
                             try { tempFile.delete() } catch (_: Exception) {}
                             if (isSessionDesired && isUsingFallbackEngine) {
                                 serviceScope.launch {
-                                    delay(350)
-                                    startListeningContinuous()
+                                    delay(800)
+                                    if (audioEngine?.isSpeakerPlaying() == false) {
+                                        startListeningContinuous()
+                                    }
                                 }
                             }
                         }
@@ -579,8 +653,10 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
             audioEngine?.setSpeakerPlaying(false)
             _sessionState.value = _sessionState.value.copy(speakerAmplitude = 0f)
             if (isSessionDesired && isUsingFallbackEngine) {
-                delay(350)
-                startListeningContinuous()
+                delay(800)
+                if (audioEngine?.isSpeakerPlaying() == false) {
+                    startListeningContinuous()
+                }
             }
             return
         }

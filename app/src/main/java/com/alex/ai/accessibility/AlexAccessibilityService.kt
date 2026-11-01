@@ -137,10 +137,111 @@ class AlexAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Scroll down on active list
+     * Global Navigation Actions: Back, Home, Recents, Notifications
+     */
+    fun goBack(): Boolean = performGlobalAction(GLOBAL_ACTION_BACK)
+    fun goHome(): Boolean = performGlobalAction(GLOBAL_ACTION_HOME)
+    fun openRecents(): Boolean = performGlobalAction(GLOBAL_ACTION_RECENTS)
+    fun openNotifications(): Boolean = performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
+    fun openQuickSettings(): Boolean = performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)
+
+    /**
+     * Robust Element Clicker (Matches Text, Content Description, View ID or Screen Bounds)
+     */
+    fun clickElement(target: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val cleanTarget = target.lowercase().trim()
+        if (cleanTarget.isBlank()) return false
+
+        val matchingNodes = mutableListOf<AccessibilityNodeInfo>()
+        findMatchingNodes(root, cleanTarget, matchingNodes)
+
+        for (node in matchingNodes) {
+            if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                return true
+            }
+            var parent = node.parent
+            while (parent != null) {
+                if (parent.isClickable && parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    return true
+                }
+                parent = parent.parent
+            }
+            // Tap center coordinates using gesture fallback
+            val rect = Rect()
+            node.getBoundsInScreen(rect)
+            if (!rect.isEmpty && rect.width() > 0 && rect.height() > 0) {
+                tapCoordinates(rect.centerX().toFloat(), rect.centerY().toFloat())
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun findMatchingNodes(node: AccessibilityNodeInfo?, target: String, list: MutableList<AccessibilityNodeInfo>) {
+        if (node == null) return
+        val text = (node.text?.toString() ?: "").lowercase()
+        val desc = (node.contentDescription?.toString() ?: "").lowercase()
+        val viewId = (node.viewIdResourceName ?: "").lowercase()
+
+        if (text.contains(target) || desc.contains(target) || viewId.contains(target)) {
+            list.add(node)
+        }
+        for (i in 0 until node.childCount) {
+            findMatchingNodes(node.getChild(i), target, list)
+        }
+    }
+
+    /**
+     * Universal Screen Scrolling & Swiping Gestures (Works in TikTok, Reels, Shorts, Feed, Web)
      */
     fun scrollDown(): Boolean {
-        val root = rootInActiveWindow ?: return false
-        return root.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+        val root = rootInActiveWindow
+        val nodeScrolled = root?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) ?: false
+        if (nodeScrolled) return true
+
+        val displayMetrics = resources.displayMetrics
+        val startX = displayMetrics.widthPixels / 2f
+        val startY = displayMetrics.heightPixels * 0.75f
+        val endY = displayMetrics.heightPixels * 0.25f
+        return swipeGesture(startX, startY, startX, endY)
+    }
+
+    fun scrollUp(): Boolean {
+        val root = rootInActiveWindow
+        val nodeScrolled = root?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD) ?: false
+        if (nodeScrolled) return true
+
+        val displayMetrics = resources.displayMetrics
+        val startX = displayMetrics.widthPixels / 2f
+        val startY = displayMetrics.heightPixels * 0.25f
+        val endY = displayMetrics.heightPixels * 0.75f
+        return swipeGesture(startX, startY, startX, endY)
+    }
+
+    fun swipeLeft(): Boolean {
+        val displayMetrics = resources.displayMetrics
+        val startX = displayMetrics.widthPixels * 0.85f
+        val endX = displayMetrics.widthPixels * 0.15f
+        val y = displayMetrics.heightPixels / 2f
+        return swipeGesture(startX, y, endX, y)
+    }
+
+    fun swipeRight(): Boolean {
+        val displayMetrics = resources.displayMetrics
+        val startX = displayMetrics.widthPixels * 0.15f
+        val endX = displayMetrics.widthPixels * 0.85f
+        val y = displayMetrics.heightPixels / 2f
+        return swipeGesture(startX, y, endX, y)
+    }
+
+    private fun swipeGesture(startX: Float, startY: Float, endX: Float, endY: Float): Boolean {
+        val path = Path().apply {
+            moveTo(startX, startY)
+            lineTo(endX, endY)
+        }
+        val stroke = GestureDescription.StrokeDescription(path, 0, 300)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        return dispatchGesture(gesture, null, null)
     }
 }
