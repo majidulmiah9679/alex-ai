@@ -217,7 +217,8 @@ fun GlowingScreenEdgeOverlay(
                         accentColor.copy(alpha = alpha * 0.4f),
                         accentColor.copy(alpha = alpha)
                     )
-                )
+                ),
+                shape = androidx.compose.ui.graphics.RectangleShape
             )
     )
 }
