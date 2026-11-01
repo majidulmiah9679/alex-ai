@@ -59,6 +59,7 @@ class AudioEngine(
         val chunkSize = 3200
         val bufferSize = maxOf(minBufferSize, chunkSize * 2)
 
+        try {
             var record = AudioRecord(
                 MediaRecorder.AudioSource.VOICE_COMMUNICATION,
                 inputSampleRate,
