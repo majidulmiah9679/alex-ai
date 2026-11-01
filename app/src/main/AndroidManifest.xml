@@ -24,6 +24,36 @@
     <!-- Glowing Screen Edge Overlay & Visual Agent -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- Full Package Visibility for App Automation (YouTube, WhatsApp, etc.) -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
+
+    <queries>
+        <package android:name="com.google.android.youtube" />
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+        <package android:name="com.facebook.katana" />
+        <package android:name="com.instagram.android" />
+        <package android:name="com.spotify.music" />
+        <package android:name="com.google.android.apps.maps" />
+        <package android:name="com.android.chrome" />
+        <package android:name="org.telegram.messenger" />
+        <package android:name="com.google.android.dialer" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.DIAL" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="smsto" />
+        </intent>
+    </queries>
+
     <application
         android:name=".AlexApplication"
         android:allowBackup="true"

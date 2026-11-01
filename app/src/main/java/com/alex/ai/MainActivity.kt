@@ -91,6 +91,8 @@ class MainActivity : ComponentActivity() {
                 val noiseSuppressorEnabled by settingsRepo.noiseSuppressorFlow.collectAsState(initial = true)
                 val edgeGlowEnabled by settingsRepo.edgeGlowFlow.collectAsState(initial = true)
                 var apiKey by remember { mutableStateOf(settingsRepo.getApiKey()) }
+                var groqApiKey by remember { mutableStateOf(settingsRepo.getGroqApiKey()) }
+                val phoneActionExecutor = remember { com.alex.ai.actions.PhoneActionExecutor(applicationContext) }
 
                 val personality = remember(currentPersonalityId) {
                     PersonalitiesRegistry.getById(currentPersonalityId)
@@ -210,22 +212,44 @@ class MainActivity : ComponentActivity() {
                                     language = currentLanguage,
                                     onSendMessage = { userText ->
                                         chatMessages.add(UiChatMessage(text = userText, isUser = true))
-                                        val lower = userText.lowercase()
-                                        if (lower.contains("call") || lower.contains("phone")) {
-                                            chatMessages.add(UiChatMessage(text = "Opening device dialer...", isUser = false, isActionBadge = true))
-                                        } else if (lower.contains("forge") || lower.contains("website") || lower.contains("cafe") || lower.contains("animated")) {
-                                            com.alex.ai.forge.ForgeController.instance.startWebsiteBuild(userText)
-                                            currentTab = ScreenTab.FORGE
-                                        } else {
-                                            // Call Gemini Brain
-                                            scope.launch {
-                                                val reply = settingsRepo.generateChatMessage(
-                                                    userText,
-                                                    personality.systemPrompt,
-                                                    currentLanguage
-                                                )
-                                                chatMessages.add(UiChatMessage(text = reply, isUser = false))
+                                        val lower = userText.lowercase().trim()
+
+                                        when {
+                                            lower.contains("youtube") || lower.contains("ইউটিউব") -> {
+                                                val res = phoneActionExecutor.openApp("youtube")
+                                                chatMessages.add(UiChatMessage(text = res.message, isUser = false, isActionBadge = true))
                                             }
+                                            lower.contains("whatsapp") || lower.contains("হোয়াটসঅ্যাপ") -> {
+                                                val res = phoneActionExecutor.openWhatsApp()
+                                                chatMessages.add(UiChatMessage(text = res.message, isUser = false, isActionBadge = true))
+                                            }
+                                            lower.contains("camera") || lower.contains("ক্যামেরা") -> {
+                                                val res = phoneActionExecutor.openApp("camera")
+                                                chatMessages.add(UiChatMessage(text = res.message, isUser = false, isActionBadge = true))
+                                            }
+                                            lower.contains("flashlight") || lower.contains("torch") || lower.contains("টর্চ") -> {
+                                                val enable = !lower.contains("off") && !lower.contains("বন্ধ")
+                                                val res = phoneActionExecutor.toggleFlashlight(enable)
+                                                chatMessages.add(UiChatMessage(text = res.message, isUser = false, isActionBadge = true))
+                                            }
+                                            lower.contains("call") || lower.contains("phone") || lower.contains("ফোন") -> {
+                                                val res = phoneActionExecutor.makeCall("")
+                                                chatMessages.add(UiChatMessage(text = res.message, isUser = false, isActionBadge = true))
+                                            }
+                                            lower.contains("forge") || lower.contains("website") || lower.contains("cafe") || lower.contains("ওয়েবসাইট") -> {
+                                                com.alex.ai.forge.ForgeController.instance.startWebsiteBuild(userText)
+                                                currentTab = ScreenTab.FORGE
+                                            }
+                                        }
+
+                                        // Query Multi-Model Brain (Gemini -> Groq failover)
+                                        scope.launch {
+                                            val reply = settingsRepo.generateChatMessage(
+                                                userText,
+                                                personality.systemPrompt,
+                                                currentLanguage
+                                            )
+                                            chatMessages.add(UiChatMessage(text = reply, isUser = false))
                                         }
                                     },
                                     messages = chatMessages
@@ -257,6 +281,14 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onValidateApiKey = { key ->
                                         settingsRepo.validateApiKey(key)
+                                    },
+                                    currentGroqApiKey = groqApiKey,
+                                    onSaveGroqApiKey = { newKey ->
+                                        settingsRepo.saveGroqApiKey(newKey)
+                                        groqApiKey = newKey
+                                    },
+                                    onValidateGroqApiKey = { key ->
+                                        settingsRepo.validateGroqApiKey(key)
                                     },
                                     echoCancellerEnabled = echoCancellerEnabled,
                                     onToggleEchoCanceller = { scope.launch { settingsRepo.setEchoCanceller(it) } },

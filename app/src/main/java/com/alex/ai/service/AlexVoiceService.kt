@@ -6,8 +6,14 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.Build
+import android.os.Bundle
 import android.os.IBinder
 import android.os.PowerManager
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.alex.ai.MainActivity
@@ -17,6 +23,7 @@ import com.alex.ai.audio.AudioEngineListener
 import com.alex.ai.data.SettingsRepository
 import com.alex.ai.domain.PersonalitiesRegistry
 import com.alex.ai.domain.Personality
+import com.alex.ai.forge.ForgeController
 import com.alex.ai.live.GeminiLiveClient
 import com.alex.ai.live.GeminiLiveListener
 import com.alex.ai.live.LiveConnectionState
@@ -28,6 +35,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.util.Locale
 
 data class VoiceSessionState(
     val connectionState: LiveConnectionState = LiveConnectionState.DISCONNECTED,
@@ -40,7 +48,7 @@ data class VoiceSessionState(
     val activeWebsiteBuildTopic: String? = null
 )
 
-class AlexVoiceService : Service() {
+class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
 
     private val tag = "AlexVoiceService"
     private val channelId = "alex_voice_channel"
@@ -53,13 +61,16 @@ class AlexVoiceService : Service() {
     private lateinit var phoneActionExecutor: PhoneActionExecutor
     private var audioEngine: AudioEngine? = null
     private var geminiClient: GeminiLiveClient? = null
+    private var speechRecognizer: SpeechRecognizer? = null
+    private var textToSpeech: TextToSpeech? = null
+    private var ttsReady = false
     private var wakeLock: PowerManager.WakeLock? = null
 
     private val _sessionState = MutableStateFlow(VoiceSessionState())
     val sessionState: StateFlow<VoiceSessionState> = _sessionState.asStateFlow()
 
-    private var reconnectAttempts = 0
     private var isSessionDesired = false
+    private var isUsingFallbackEngine = false
 
     inner class LocalBinder : Binder() {
         fun getService(): AlexVoiceService = this@AlexVoiceService
@@ -91,17 +102,60 @@ class AlexVoiceService : Service() {
 
         createNotificationChannel()
 
+        // Init TextToSpeech for zero-quota voice synthesis
+        try {
+            textToSpeech = TextToSpeech(this, this)
+        } catch (e: Exception) {
+            Log.e(tag, "TTS init error", e)
+        }
+
         initAudioAndLive()
+    }
+
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            ttsReady = true
+            textToSpeech?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) {
+                    _sessionState.value = _sessionState.value.copy(speakerAmplitude = 0.65f)
+                }
+
+                override fun onDone(utteranceId: String?) {
+                    _sessionState.value = _sessionState.value.copy(speakerAmplitude = 0f)
+                    // Auto-listen again for seamless two-way conversation
+                    if (isSessionDesired && isUsingFallbackEngine) {
+                        serviceScope.launch {
+                            delay(400)
+                            startListeningContinuous()
+                        }
+                    }
+                }
+
+                override fun onError(utteranceId: String?) {
+                    _sessionState.value = _sessionState.value.copy(speakerAmplitude = 0f)
+                    if (isSessionDesired && isUsingFallbackEngine) {
+                        serviceScope.launch {
+                            delay(500)
+                            startListeningContinuous()
+                        }
+                    }
+                }
+            })
+        }
     }
 
     private fun initAudioAndLive() {
         audioEngine = AudioEngine(object : AudioEngineListener {
             override fun onMicData(chunk: ByteArray) {
-                geminiClient?.sendAudioChunk(chunk)
+                if (!isUsingFallbackEngine) {
+                    geminiClient?.sendAudioChunk(chunk)
+                }
             }
 
             override fun onMicAmplitude(amplitude: Float) {
-                _sessionState.value = _sessionState.value.copy(micAmplitude = amplitude)
+                if (!isUsingFallbackEngine) {
+                    _sessionState.value = _sessionState.value.copy(micAmplitude = amplitude)
+                }
             }
 
             override fun onSpeakerAmplitude(amplitude: Float) {
@@ -111,17 +165,17 @@ class AlexVoiceService : Service() {
 
         geminiClient = GeminiLiveClient(object : GeminiLiveListener {
             override fun onConnected() {
-                reconnectAttempts = 0
+                isUsingFallbackEngine = false
                 _sessionState.value = _sessionState.value.copy(connectionState = LiveConnectionState.STREAMING)
                 audioEngine?.startRecording()
-                updateNotification("Alex is listening and live...")
+                updateNotification("Alex is live and listening...")
             }
 
             override fun onDisconnected(reason: String) {
                 audioEngine?.stopRecording()
-                _sessionState.value = _sessionState.value.copy(connectionState = LiveConnectionState.DISCONNECTED)
+                Log.w(tag, "Live client disconnected ($reason). Switching to continuous fallback engine.")
                 if (isSessionDesired) {
-                    attemptReconnect()
+                    activateFallbackVoiceEngine()
                 }
             }
 
@@ -138,12 +192,12 @@ class AlexVoiceService : Service() {
             }
 
             override fun onInterrupted() {
-                // User barge-in! Stop playback instantly
                 audioEngine?.stopPlayback()
+                textToSpeech?.stop()
             }
 
             override fun onTurnComplete() {
-                Log.d(tag, "Turn complete")
+                Log.d(tag, "Live turn complete")
             }
 
             override fun onToolCall(id: String, name: String, args: JsonObject?) {
@@ -153,9 +207,9 @@ class AlexVoiceService : Service() {
             }
 
             override fun onError(error: Throwable) {
-                Log.e(tag, "Gemini client error", error)
+                Log.e(tag, "Gemini live error: ${error.message}. Activating fallback engine.")
                 if (isSessionDesired) {
-                    attemptReconnect()
+                    activateFallbackVoiceEngine()
                 }
             }
         })
@@ -165,7 +219,7 @@ class AlexVoiceService : Service() {
         isSessionDesired = true
         startForegroundServiceNotification()
 
-        wakeLock?.acquire(12 * 60 * 60 * 1000L /* 12 hours max */)
+        wakeLock?.acquire(12 * 60 * 60 * 1000L)
 
         serviceScope.launch {
             val apiKey = settingsRepository.getApiKey()
@@ -179,15 +233,19 @@ class AlexVoiceService : Service() {
                 connectionState = LiveConnectionState.CONNECTING
             )
 
+            // Connect to WebSocket; if quota 1011 or error occurs, onDisconnected/onError activates fallback
             geminiClient?.connect(apiKey, personality, language)
         }
     }
 
     fun stopSession() {
         isSessionDesired = false
+        isUsingFallbackEngine = false
         geminiClient?.disconnect()
         audioEngine?.stopRecording()
         audioEngine?.stopPlayback()
+        textToSpeech?.stop()
+        stopSpeechRecognizer()
 
         if (wakeLock?.isHeld == true) {
             wakeLock?.release()
@@ -203,16 +261,205 @@ class AlexVoiceService : Service() {
         stopSelf()
     }
 
-    private fun attemptReconnect() {
-        if (!isSessionDesired || reconnectAttempts >= 5) return
-        reconnectAttempts++
-        val backoffDelay = (1000L * (1 shl reconnectAttempts)).coerceAtMost(10000L)
-        Log.d(tag, "Attempting reconnect #$reconnectAttempts in ${backoffDelay}ms")
+    /**
+     * Continuous Voice Fallback Engine:
+     * When Gemini Live socket has quota 1011 or rate limits,
+     * this engine keeps the 2-way real-time voice conversation alive:
+     * SpeechRecognizer -> Multi-Model Brain (Gemini 3.5 / Groq) -> 24kHz Audio / TTS!
+     */
+    private fun activateFallbackVoiceEngine() {
+        isUsingFallbackEngine = true
+        _sessionState.value = _sessionState.value.copy(connectionState = LiveConnectionState.STREAMING)
+        updateNotification("Alex is listening (Dual Engine Active)...")
+        startListeningContinuous()
+    }
+
+    private fun startListeningContinuous() {
+        if (!isSessionDesired) return
+
+        serviceScope.launch(Dispatchers.Main) {
+            try {
+                if (speechRecognizer == null) {
+                    if (!SpeechRecognizer.isRecognitionAvailable(this@AlexVoiceService)) {
+                        Log.w(tag, "Speech recognition not available on device")
+                        return@launch
+                    }
+                    speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this@AlexVoiceService)
+                }
+
+                val currentLang = _sessionState.value.language
+                val localeTag = when (currentLang) {
+                    "bn" -> "bn-BD"
+                    "hi" -> "hi-IN"
+                    "hinglish" -> "hi-IN"
+                    else -> "en-US"
+                }
+
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, localeTag)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, localeTag)
+                    putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, localeTag)
+                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+                }
+
+                speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+                    override fun onReadyForSpeech(params: Bundle?) {
+                        Log.d(tag, "SpeechRecognizer ready for speech")
+                    }
+
+                    override fun onBeginningOfSpeech() {
+                        _sessionState.value = _sessionState.value.copy(micAmplitude = 0.6f)
+                    }
+
+                    override fun onRmsChanged(rmsdB: Float) {
+                        val norm = (rmsdB / 10f).coerceIn(0.1f, 1f)
+                        _sessionState.value = _sessionState.value.copy(micAmplitude = norm)
+                    }
+
+                    override fun onBufferReceived(buffer: ByteArray?) {}
+
+                    override fun onEndOfSpeech() {
+                        _sessionState.value = _sessionState.value.copy(micAmplitude = 0f)
+                    }
+
+                    override fun onError(error: Int) {
+                        _sessionState.value = _sessionState.value.copy(micAmplitude = 0f)
+                        if (isSessionDesired && isUsingFallbackEngine) {
+                            serviceScope.launch {
+                                delay(600)
+                                startListeningContinuous()
+                            }
+                        }
+                    }
+
+                    override fun onResults(results: Bundle?) {
+                        _sessionState.value = _sessionState.value.copy(micAmplitude = 0f)
+                        val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        val spokenText = matches?.firstOrNull() ?: ""
+                        if (spokenText.isNotBlank()) {
+                            processSpokenVoiceInput(spokenText)
+                        } else if (isSessionDesired && isUsingFallbackEngine) {
+                            startListeningContinuous()
+                        }
+                    }
+
+                    override fun onPartialResults(partialResults: Bundle?) {
+                        val partial = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                        if (!partial.isNullOrBlank()) {
+                            _sessionState.value = _sessionState.value.copy(lastUserText = partial)
+                        }
+                    }
+
+                    override fun onEvent(eventType: Int, params: Bundle?) {}
+                })
+
+                speechRecognizer?.startListening(intent)
+            } catch (e: Exception) {
+                Log.e(tag, "Error starting SpeechRecognizer", e)
+            }
+        }
+    }
+
+    private fun stopSpeechRecognizer() {
+        try {
+            speechRecognizer?.stopListening()
+            speechRecognizer?.destroy()
+        } catch (e: Exception) {
+            Log.e(tag, "Error stopping SpeechRecognizer", e)
+        }
+        speechRecognizer = null
+    }
+
+    private fun processSpokenVoiceInput(spokenText: String) {
+        _sessionState.value = _sessionState.value.copy(lastUserText = spokenText)
 
         serviceScope.launch {
-            delay(backoffDelay)
-            if (isSessionDesired) {
-                startSession()
+            val lower = spokenText.lowercase().trim()
+
+            // 1. Direct Local Automation Routing
+            var actionMsg: String? = null
+            when {
+                lower.contains("youtube") || lower.contains("ইউটিউব") -> {
+                    val res = phoneActionExecutor.openApp("youtube")
+                    actionMsg = if (res.success) "YouTube khulchhi!" else res.message
+                }
+                lower.contains("whatsapp") || lower.contains("হোয়াটসঅ্যাপ") -> {
+                    val res = phoneActionExecutor.openWhatsApp()
+                    actionMsg = if (res.success) "WhatsApp khulchhi!" else res.message
+                }
+                lower.contains("camera") || lower.contains("ক্যামেরা") -> {
+                    val res = phoneActionExecutor.openApp("camera")
+                    actionMsg = if (res.success) "Camera open korchhi!" else res.message
+                }
+                lower.contains("flashlight") || lower.contains("torch") || lower.contains("টর্চ") -> {
+                    val enable = !lower.contains("off") && !lower.contains("বন্ধ")
+                    val res = phoneActionExecutor.toggleFlashlight(enable)
+                    actionMsg = res.message
+                }
+                lower.contains("settings") || lower.contains("সেটিংস") -> {
+                    val res = phoneActionExecutor.openSettings("general")
+                    actionMsg = "Settings khulchhi!"
+                }
+                lower.contains("call") || lower.contains("ফোন") -> {
+                    val res = phoneActionExecutor.makeCall("")
+                    actionMsg = "Dialer open korchhi!"
+                }
+                lower.contains("website") || lower.contains("forge") || lower.contains("ওয়েবসাইট") || lower.contains("cafe") -> {
+                    ForgeController.instance.startWebsiteBuild(spokenText)
+                    _sessionState.value = _sessionState.value.copy(activeWebsiteBuildTopic = spokenText)
+                    actionMsg = "3D Website Forge reactor core ready korchhi!"
+                }
+            }
+
+            // 2. Query Multi-Model Brain (Gemini 3.5 -> Flash -> Groq)
+            val replyText = if (actionMsg != null) {
+                actionMsg
+            } else {
+                val personality = _sessionState.value.personality
+                val language = _sessionState.value.language
+                settingsRepository.generateChatMessage(spokenText, personality.systemPrompt, language)
+            }
+
+            _sessionState.value = _sessionState.value.copy(lastModelText = replyText)
+
+            // 3. Speak reply aloud
+            speakResponse(replyText)
+        }
+    }
+
+    private suspend fun speakResponse(text: String) {
+        val personality = _sessionState.value.personality
+        val lang = _sessionState.value.language
+
+        // Attempt Gemini 24kHz Studio PCM TTS first
+        val pcmAudio = settingsRepository.generateSpeechAudio(text, personality.voiceName)
+        if (pcmAudio != null && pcmAudio.isNotEmpty()) {
+            _sessionState.value = _sessionState.value.copy(speakerAmplitude = 0.7f)
+            audioEngine?.enqueuePlaybackChunk(pcmAudio)
+            delay((pcmAudio.size / (24000 * 2) * 1000L).coerceAtLeast(1000L))
+            _sessionState.value = _sessionState.value.copy(speakerAmplitude = 0f)
+            if (isSessionDesired && isUsingFallbackEngine) {
+                delay(300)
+                startListeningContinuous()
+            }
+            return
+        }
+
+        // Seamless fallback to Android Native TextToSpeech
+        withContext(Dispatchers.Main) {
+            if (ttsReady && textToSpeech != null) {
+                val loc = when (lang) {
+                    "bn" -> Locale("bn", "BD")
+                    "hi", "hinglish" -> Locale("hi", "IN")
+                    else -> Locale.ENGLISH
+                }
+                textToSpeech?.language = loc
+                textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "alex_speech_id")
+            } else if (isSessionDesired && isUsingFallbackEngine) {
+                delay(1000)
+                startListeningContinuous()
             }
         }
     }
@@ -229,7 +476,6 @@ class AlexVoiceService : Service() {
             return
         }
 
-        // Delegate to native PhoneActionExecutor
         val result = phoneActionExecutor.execute(name, args)
         geminiClient?.sendToolResponse(id, buildJsonObject {
             put("status", if (result.success) "success" else "failure")
@@ -287,6 +533,8 @@ class AlexVoiceService : Service() {
         audioEngine?.release()
         audioEngine = null
         geminiClient = null
+        textToSpeech?.shutdown()
+        textToSpeech = null
         serviceScope.cancel()
         super.onDestroy()
     }
