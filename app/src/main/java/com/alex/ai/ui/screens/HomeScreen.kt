@@ -173,7 +173,7 @@ fun HomeScreen(
                     border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x334A90E2)),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 16.dp)
+                        .padding(bottom = 12.dp)
                 ) {
                     Column(modifier = Modifier.padding(14.dp)) {
                         if (lastUserText.isNotBlank()) {
@@ -197,29 +197,97 @@ fun HomeScreen(
                 }
             }
 
-            // Primary Start/Stop Voice Action Pill
-            Button(
-                onClick = onToggleVoiceSession,
-                shape = RoundedCornerShape(28.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isSessionActive) Color(0xFFFF3D00) else MarigoldAccent
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                elevation = ButtonDefaults.buttonElevation(defaultElevation = 8.dp)
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    text = when {
-                        isConnecting -> "CONNECTING..."
-                        isSessionActive -> "END VOICE SESSION"
-                        else -> "START VOICE SESSION"
+                // Live Status Pill
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = when {
+                        isSessionActive -> Color(0xFF0B2E1C)
+                        isConnecting -> Color(0xFF2E240B)
+                        else -> Color(0xFF131834)
                     },
-                    color = DeepIndigoNight,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 1.sp
-                )
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        when {
+                            isSessionActive -> Color(0xFF00E676)
+                            isConnecting -> Color(0xFFFFB300)
+                            else -> Color(0x334A90E2)
+                        }
+                    ),
+                    modifier = Modifier.padding(bottom = 12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    when {
+                                        isSessionActive -> Color(0xFF00E676)
+                                        isConnecting -> Color(0xFFFFB300)
+                                        else -> Color(0xFF8B94B2)
+                                    }
+                                )
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = when {
+                                isSessionActive -> if (speakerAmplitude > 0.05f) "🔴 LIVE: Alex bolche..." else "🔴 LIVE: Shunchhi... (Bolun)"
+                                isConnecting -> "Gemini Brain-e connect hocche..."
+                                else -> "Real-time Live Mode ready"
+                            },
+                            color = when {
+                                isSessionActive -> Color(0xFF00E676)
+                                isConnecting -> Color(0xFFFFB300)
+                                else -> Color(0xFF8B94B2)
+                            },
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                // Primary Start/Stop Voice Action Pill
+                Button(
+                    onClick = onToggleVoiceSession,
+                    shape = RoundedCornerShape(28.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isSessionActive) Color(0xFFFF3D00) else if (isConnecting) Color(0xFFFFB300) else Color(0xFF00E676)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(58.dp),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 8.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = when {
+                                isConnecting -> "⏳"
+                                isSessionActive -> "⏹️"
+                                else -> "🎙️"
+                            },
+                            fontSize = 20.sp
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = when {
+                                isConnecting -> "CONNECTING TO GEMINI..."
+                                isSessionActive -> "STOP LIVE MODE (কথা শেষ করুন)"
+                                else -> "START LIVE MODE (লাইভ কথা বলুন)"
+                            },
+                            color = DeepIndigoNight,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+                }
             }
         }
     }

@@ -65,7 +65,21 @@ class AlexVoiceService : Service() {
         fun getService(): AlexVoiceService = this@AlexVoiceService
     }
 
+    companion object {
+        const val ACTION_START_SESSION = "com.alex.ai.action.START_SESSION"
+        const val ACTION_STOP_SESSION = "com.alex.ai.action.STOP_SESSION"
+    }
+
     override fun onBind(intent: Intent?): IBinder = binder
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_STOP_SESSION -> stopSession()
+            ACTION_START_SESSION -> startSession()
+            else -> startSession()
+        }
+        return START_STICKY
+    }
 
     override fun onCreate() {
         super.onCreate()

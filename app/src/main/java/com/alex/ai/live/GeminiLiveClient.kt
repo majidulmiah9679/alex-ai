@@ -192,7 +192,7 @@ class GeminiLiveClient(
 
         val setupMsg = BidiClientMessage(
             setup = BidiSetup(
-                model = "models/gemini-2.0-flash-exp",
+                model = "models/gemini-2.5-flash-native-audio-latest",
                 generationConfig = BidiGenerationConfig(
                     responseModalities = listOf("AUDIO"),
                     speechConfig = BidiSpeechConfig(
@@ -302,6 +302,13 @@ class GeminiLiveClient(
     private fun handleServerMessage(text: String) {
         try {
             val serverMsg = json.decodeFromString<BidiServerMessage>(text)
+
+            // Setup Confirmation
+            if (serverMsg.setupComplete != null) {
+                Log.d(tag, "BidiGenerateContent setup confirmed by Gemini server")
+                _connectionState.value = LiveConnectionState.STREAMING
+                listener.onConnected()
+            }
 
             // 1. Check for User Interruption (Barge-In)
             if (serverMsg.serverContent?.interrupted == true) {

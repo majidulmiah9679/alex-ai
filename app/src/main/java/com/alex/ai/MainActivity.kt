@@ -172,13 +172,24 @@ class MainActivity : ComponentActivity() {
                                     lastUserText = sessionState.lastUserText,
                                     lastModelText = sessionState.lastModelText,
                                     onToggleVoiceSession = {
+                                        // Check microphone permission first
+                                        if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                                            requestNeededPermissions()
+                                            return@HomeScreen
+                                        }
+
                                         if (sessionState.connectionState == LiveConnectionState.STREAMING ||
                                             sessionState.connectionState == LiveConnectionState.CONNECTED
                                         ) {
+                                            val stopIntent = Intent(this@MainActivity, AlexVoiceService::class.java).apply {
+                                                action = AlexVoiceService.ACTION_STOP_SESSION
+                                            }
+                                            startService(stopIntent)
                                             voiceService?.stopSession()
                                         } else {
-                                            // Start Foreground Service
-                                            val startIntent = Intent(this@MainActivity, AlexVoiceService::class.java)
+                                            val startIntent = Intent(this@MainActivity, AlexVoiceService::class.java).apply {
+                                                action = AlexVoiceService.ACTION_START_SESSION
+                                            }
                                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                                 startForegroundService(startIntent)
                                             } else {
@@ -199,14 +210,22 @@ class MainActivity : ComponentActivity() {
                                     language = currentLanguage,
                                     onSendMessage = { userText ->
                                         chatMessages.add(UiChatMessage(text = userText, isUser = true))
-                                        // Send to live websocket if connected
-                                        // or trigger action
                                         val lower = userText.lowercase()
                                         if (lower.contains("call") || lower.contains("phone")) {
                                             chatMessages.add(UiChatMessage(text = "Opening device dialer...", isUser = false, isActionBadge = true))
                                         } else if (lower.contains("forge") || lower.contains("website") || lower.contains("cafe") || lower.contains("animated")) {
                                             com.alex.ai.forge.ForgeController.instance.startWebsiteBuild(userText)
                                             currentTab = ScreenTab.FORGE
+                                        } else {
+                                            // Call Gemini Brain
+                                            scope.launch {
+                                                val reply = settingsRepo.generateChatMessage(
+                                                    userText,
+                                                    personality.systemPrompt,
+                                                    currentLanguage
+                                                )
+                                                chatMessages.add(UiChatMessage(text = reply, isUser = false))
+                                            }
                                         }
                                     },
                                     messages = chatMessages
@@ -235,6 +254,9 @@ class MainActivity : ComponentActivity() {
                                     onSaveApiKey = { newKey ->
                                         settingsRepo.saveApiKey(newKey)
                                         apiKey = newKey
+                                    },
+                                    onValidateApiKey = { key ->
+                                        settingsRepo.validateApiKey(key)
                                     },
                                     echoCancellerEnabled = echoCancellerEnabled,
                                     onToggleEchoCanceller = { scope.launch { settingsRepo.setEchoCanceller(it) } },

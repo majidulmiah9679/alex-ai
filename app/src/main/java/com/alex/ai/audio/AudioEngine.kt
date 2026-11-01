@@ -59,8 +59,7 @@ class AudioEngine(
         val chunkSize = 3200
         val bufferSize = maxOf(minBufferSize, chunkSize * 2)
 
-        try {
-            audioRecord = AudioRecord(
+            var record = AudioRecord(
                 MediaRecorder.AudioSource.VOICE_COMMUNICATION,
                 inputSampleRate,
                 inputChannelConfig,
@@ -68,25 +67,53 @@ class AudioEngine(
                 bufferSize
             )
 
-            val audioSessionId = audioRecord!!.audioSessionId
+            // Fallback to standard MIC if VOICE_COMMUNICATION is not supported on device
+            if (record.state != AudioRecord.STATE_INITIALIZED) {
+                Log.w(tag, "VOICE_COMMUNICATION not supported, falling back to MIC source")
+                record.release()
+                record = AudioRecord(
+                    MediaRecorder.AudioSource.MIC,
+                    inputSampleRate,
+                    inputChannelConfig,
+                    inputAudioFormat,
+                    bufferSize
+                )
+            }
+
+            if (record.state != AudioRecord.STATE_INITIALIZED) {
+                Log.e(tag, "AudioRecord failed to initialize")
+                record.release()
+                return
+            }
+
+            audioRecord = record
+            val audioSessionId = record.audioSessionId
 
             // Hardware Acoustic Echo Guard
-            if (enableEchoGuard && AcousticEchoCanceler.isAvailable()) {
-                echoCanceler = AcousticEchoCanceler.create(audioSessionId)?.apply {
-                    enabled = true
-                    Log.d(tag, "Acoustic Echo Canceler enabled")
+            try {
+                if (enableEchoGuard && AcousticEchoCanceler.isAvailable()) {
+                    echoCanceler = AcousticEchoCanceler.create(audioSessionId)?.apply {
+                        enabled = true
+                        Log.d(tag, "Acoustic Echo Canceler enabled")
+                    }
                 }
+            } catch (e: Exception) {
+                Log.w(tag, "AcousticEchoCanceler init warning: ${e.message}")
             }
 
             // Hardware Noise Suppressor
-            if (enableNoiseSuppressor && NoiseSuppressor.isAvailable()) {
-                noiseSuppressor = NoiseSuppressor.create(audioSessionId)?.apply {
-                    enabled = true
-                    Log.d(tag, "Noise Suppressor enabled")
+            try {
+                if (enableNoiseSuppressor && NoiseSuppressor.isAvailable()) {
+                    noiseSuppressor = NoiseSuppressor.create(audioSessionId)?.apply {
+                        enabled = true
+                        Log.d(tag, "Noise Suppressor enabled")
+                    }
                 }
+            } catch (e: Exception) {
+                Log.w(tag, "NoiseSuppressor init warning: ${e.message}")
             }
 
-            audioRecord!!.startRecording()
+            record.startRecording()
             isRecording = true
 
             recordingJob = audioScope.launch {

@@ -22,6 +22,7 @@ import com.alex.ai.ui.theme.MarigoldAccent
 fun SettingsScreen(
     currentApiKey: String,
     onSaveApiKey: (String) -> Unit,
+    onValidateApiKey: suspend (String) -> Pair<Boolean, String> = { Pair(true, "Key active") },
     echoCancellerEnabled: Boolean,
     onToggleEchoCanceller: (Boolean) -> Unit,
     noiseSuppressorEnabled: Boolean,
@@ -29,8 +30,23 @@ fun SettingsScreen(
     edgeGlowEnabled: Boolean,
     onToggleEdgeGlow: (Boolean) -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     var apiKeyInput by remember { mutableStateOf(currentApiKey) }
     var keySavedFeedback by remember { mutableStateOf(false) }
+    var isVerifying by remember { mutableStateOf(false) }
+    var verificationSuccess by remember { mutableStateOf<Boolean?>(null) }
+    var verificationMsg by remember { mutableStateOf("") }
+
+    // Auto-verify on first load if key is present
+    LaunchedEffect(currentApiKey) {
+        if (currentApiKey.isNotBlank()) {
+            isVerifying = true
+            val (ok, msg) = onValidateApiKey(currentApiKey)
+            verificationSuccess = ok
+            verificationMsg = msg
+            isVerifying = false
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -95,8 +111,9 @@ fun SettingsScreen(
                         onValueChange = {
                             apiKeyInput = it
                             keySavedFeedback = false
+                            verificationSuccess = null
                         },
-                        placeholder = { Text("Paste AIzaSy... key", color = Color(0xFF6B7280)) },
+                        placeholder = { Text("Paste Gemini API key", color = Color(0xFF6B7280)) },
                         visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -113,21 +130,162 @@ fun SettingsScreen(
                         singleLine = true
                     )
 
-                    Button(
-                        onClick = {
-                            onSaveApiKey(apiKeyInput.trim())
-                            keySavedFeedback = true
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = MarigoldAccent),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.align(Alignment.End)
+                    // Green Tick / Red Cross Indicator Badge
+                    if (isVerifying) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF1E284A),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(
+                                    color = MarigoldAccent,
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = "Testing Gemini Brain connection...",
+                                    color = Color(0xFFE2E8F0),
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    } else if (verificationSuccess == true) {
+                        // Green Tick Card
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF0B2E1C),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E676)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "✓",
+                                    color = Color(0xFF00E676),
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "API Key Supported & Active",
+                                        color = Color(0xFF00E676),
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = verificationMsg.ifEmpty { "Connected to Gemini Live model pipeline" },
+                                        color = Color(0xFFA7F3D0),
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+                        }
+                    } else if (verificationSuccess == false) {
+                        // Red Cross Card
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF2E0B0E),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF3D00)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "✗",
+                                    color = Color(0xFFFF3D00),
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "API Key Error / Not Supported",
+                                        color = Color(0xFFFF3D00),
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = verificationMsg.ifEmpty { "Check API key or network connection" },
+                                        color = Color(0xFFFECACA),
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = if (keySavedFeedback) "✓ KEY SAVED" else "SAVE SECURELY",
-                            color = DeepIndigoNight,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp
-                        )
+                        // Test Button
+                        OutlinedButton(
+                            onClick = {
+                                val keyToTest = apiKeyInput.trim().ifEmpty { currentApiKey }
+                                scope.launch {
+                                    isVerifying = true
+                                    val (ok, msg) = onValidateApiKey(keyToTest)
+                                    verificationSuccess = ok
+                                    verificationMsg = msg
+                                    isVerifying = false
+                                }
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MarigoldAccent),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = "TEST KEY",
+                                color = MarigoldAccent,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        }
+
+                        // Save Button
+                        Button(
+                            onClick = {
+                                val cleanKey = apiKeyInput.trim()
+                                onSaveApiKey(cleanKey)
+                                keySavedFeedback = true
+                                scope.launch {
+                                    isVerifying = true
+                                    val (ok, msg) = onValidateApiKey(cleanKey)
+                                    verificationSuccess = ok
+                                    verificationMsg = msg
+                                    isVerifying = false
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MarigoldAccent),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = if (keySavedFeedback) "✓ SAVED" else "SAVE SECURELY",
+                                color = DeepIndigoNight,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        }
                     }
                 }
             }

@@ -100,6 +100,7 @@ data class BidiFunctionResponse(
 // Server message schemas
 @Serializable
 data class BidiServerMessage(
+    val setupComplete: JsonObject? = null,
     val serverContent: BidiServerContent? = null,
     val toolCall: BidiToolCall? = null,
     val toolCallCancellation: BidiToolCallCancellation? = null
