@@ -38,6 +38,18 @@ class AudioEngine(
     private var isRecording = false
     private var isPlaying = false
 
+    // State corresponding to "Check speaker_playing -> Jarvis bol raha hai?" in diagram
+    val isSpeakerPlaying = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    fun setSpeakerPlaying(playing: Boolean) {
+        isSpeakerPlaying.set(playing)
+        if (!playing) {
+            listener.onSpeakerAmplitude(0f)
+        }
+    }
+
+    fun isSpeakerPlaying(): Boolean = isSpeakerPlaying.get()
+
     private val playbackQueue = ConcurrentLinkedQueue<ByteArray>()
     private var recordingJob: Job? = null
     private var playbackJob: Job? = null
@@ -123,11 +135,17 @@ class AudioEngine(
                     val readBytes = audioRecord?.read(buffer, 0, buffer.size) ?: -1
                     if (readBytes > 0) {
                         val chunk = buffer.copyOf(readBytes)
-                        listener.onMicData(chunk)
 
-                        // Calculate RMS Amplitude
-                        val amplitude = calculateRms(chunk)
-                        listener.onMicAmplitude(amplitude)
+                        // Diagram Decision Node: "Check speaker_playing -> Jarvis bol raha hai?"
+                        if (isSpeakerPlaying.get()) {
+                            // YES -> Mute / Discard Chunk (prevents audio feedback and false barge-in)
+                            listener.onMicAmplitude(0f)
+                        } else {
+                            // NO -> Forward to Gemini Live API
+                            listener.onMicData(chunk)
+                            val amplitude = calculateRms(chunk)
+                            listener.onMicAmplitude(amplitude)
+                        }
                     }
                 }
             }
@@ -169,7 +187,7 @@ class AudioEngine(
         )
 
         val audioAttributes = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+            .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
             .build()
 
@@ -187,6 +205,12 @@ class AudioEngine(
             AudioManager.AUDIO_SESSION_ID_GENERATE
         )
 
+        try {
+            audioTrack?.setVolume(AudioTrack.getMaxVolume())
+        } catch (e: Exception) {
+            Log.w(tag, "Volume setup notice: ${e.message}")
+        }
+
         audioTrack?.play()
         isPlaying = true
 
@@ -194,11 +218,15 @@ class AudioEngine(
             while (isPlaying && isActive) {
                 val chunk = playbackQueue.poll()
                 if (chunk != null) {
+                    isSpeakerPlaying.set(true)
                     audioTrack?.write(chunk, 0, chunk.size)
                     val amplitude = calculateRms(chunk)
                     listener.onSpeakerAmplitude(amplitude)
                 } else {
-                    delay(10)
+                    // Speaker queue drained -> Jarvis finished speaking
+                    isSpeakerPlaying.set(false)
+                    listener.onSpeakerAmplitude(0f)
+                    delay(15)
                 }
             }
         }
@@ -208,6 +236,7 @@ class AudioEngine(
      * Enqueue incoming 24kHz PCM chunk from Gemini
      */
     fun enqueuePlaybackChunk(pcmBytes: ByteArray) {
+        isSpeakerPlaying.set(true)
         playbackQueue.offer(pcmBytes)
         if (!isPlaying || audioTrack == null) {
             startPlayback()
@@ -219,6 +248,7 @@ class AudioEngine(
      */
     fun stopPlayback() {
         playbackQueue.clear()
+        isSpeakerPlaying.set(false)
         try {
             audioTrack?.pause()
             audioTrack?.flush()

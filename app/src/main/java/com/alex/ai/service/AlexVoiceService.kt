@@ -35,6 +35,12 @@ import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import android.media.AudioAttributes
+import android.media.AudioManager
+import android.media.MediaPlayer
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 import java.util.Locale
 
 data class VoiceSessionState(
@@ -104,7 +110,7 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
 
         // Init TextToSpeech for zero-quota voice synthesis
         try {
-            textToSpeech = TextToSpeech(this, this)
+            textToSpeech = TextToSpeech(applicationContext, this)
         } catch (e: Exception) {
             Log.e(tag, "TTS init error", e)
         }
@@ -117,21 +123,24 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
             ttsReady = true
             textToSpeech?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {
-                    _sessionState.value = _sessionState.value.copy(speakerAmplitude = 0.65f)
+                    audioEngine?.setSpeakerPlaying(true)
+                    _sessionState.value = _sessionState.value.copy(speakerAmplitude = 0.75f)
                 }
 
                 override fun onDone(utteranceId: String?) {
+                    audioEngine?.setSpeakerPlaying(false)
                     _sessionState.value = _sessionState.value.copy(speakerAmplitude = 0f)
                     // Auto-listen again for seamless two-way conversation
                     if (isSessionDesired && isUsingFallbackEngine) {
                         serviceScope.launch {
-                            delay(400)
+                            delay(350)
                             startListeningContinuous()
                         }
                     }
                 }
 
                 override fun onError(utteranceId: String?) {
+                    audioEngine?.setSpeakerPlaying(false)
                     _sessionState.value = _sessionState.value.copy(speakerAmplitude = 0f)
                     if (isSessionDesired && isUsingFallbackEngine) {
                         serviceScope.launch {
@@ -470,6 +479,89 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    private var mediaPlayer: MediaPlayer? = null
+
+    private suspend fun playNeuralVoiceStream(text: String, lang: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val langCode = when (lang) {
+                "bn" -> "bn"
+                "hi", "hinglish" -> "hi"
+                else -> "en"
+            }
+            val encodedText = java.net.URLEncoder.encode(text.take(200), "UTF-8")
+            val url = "https://translate.google.com/translate_tts?ie=UTF-8&tl=$langCode&client=tw-ob&q=$encodedText"
+
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
+                .build()
+
+            val client = OkHttpClient.Builder()
+                .connectTimeout(5, TimeUnit.SECONDS)
+                .readTimeout(8, TimeUnit.SECONDS)
+                .build()
+
+            val response = client.newCall(request).execute()
+            if (!response.isSuccessful) return@withContext false
+            val audioBytes = response.body?.bytes() ?: return@withContext false
+            if (audioBytes.size < 100) return@withContext false
+
+            val tempFile = java.io.File(cacheDir, "alex_speech_${System.currentTimeMillis()}.mp3")
+            tempFile.writeBytes(audioBytes)
+
+            withContext(Dispatchers.Main) {
+                try {
+                    val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                    audioManager.mode = AudioManager.MODE_NORMAL
+                    audioManager.isSpeakerphoneOn = true
+
+                    mediaPlayer?.release()
+                    mediaPlayer = MediaPlayer().apply {
+                        setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                                .build()
+                        )
+                        setDataSource(tempFile.absolutePath)
+                        prepare()
+                        audioEngine?.setSpeakerPlaying(true)
+                        _sessionState.value = _sessionState.value.copy(speakerAmplitude = 0.75f)
+
+                        setOnCompletionListener {
+                            audioEngine?.setSpeakerPlaying(false)
+                            _sessionState.value = _sessionState.value.copy(speakerAmplitude = 0f)
+                            try { tempFile.delete() } catch (_: Exception) {}
+                            if (isSessionDesired && isUsingFallbackEngine) {
+                                serviceScope.launch {
+                                    delay(350)
+                                    startListeningContinuous()
+                                }
+                            }
+                        }
+
+                        setOnErrorListener { _, _, _ ->
+                            audioEngine?.setSpeakerPlaying(false)
+                            _sessionState.value = _sessionState.value.copy(speakerAmplitude = 0f)
+                            try { tempFile.delete() } catch (_: Exception) {}
+                            false
+                        }
+
+                        start()
+                    }
+                } catch (e: Exception) {
+                    audioEngine?.setSpeakerPlaying(false)
+                    _sessionState.value = _sessionState.value.copy(speakerAmplitude = 0f)
+                    try { tempFile.delete() } catch (_: Exception) {}
+                }
+            }
+            true
+        } catch (e: Exception) {
+            Log.w(tag, "Neural TTS failed: ${e.message}")
+            false
+        }
+    }
+
     private suspend fun speakResponse(text: String) {
         val selectedVoiceId = settingsRepository.voiceIdFlow.first()
         val voice = com.alex.ai.domain.JarvisVoiceRegistry.getById(selectedVoiceId)
@@ -477,37 +569,71 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
         val voiceSpeed = settingsRepository.voiceSpeedFlow.first()
         val lang = _sessionState.value.language
 
-        // Attempt Gemini 24kHz Studio PCM TTS first
+        // 1. Attempt Gemini 24kHz Studio PCM TTS first (if quota available)
         val pcmAudio = settingsRepository.generateSpeechAudio(text, voice.geminiVoice)
         if (pcmAudio != null && pcmAudio.isNotEmpty()) {
+            audioEngine?.setSpeakerPlaying(true)
             _sessionState.value = _sessionState.value.copy(speakerAmplitude = 0.7f)
             audioEngine?.enqueuePlaybackChunk(pcmAudio)
             delay((pcmAudio.size / (24000 * 2) * 1000L).coerceAtLeast(1000L))
+            audioEngine?.setSpeakerPlaying(false)
             _sessionState.value = _sessionState.value.copy(speakerAmplitude = 0f)
             if (isSessionDesired && isUsingFallbackEngine) {
-                delay(300)
+                delay(350)
                 startListeningContinuous()
             }
             return
         }
 
-        // Seamless fallback to Android Native TextToSpeech with human pitch and speed
+        // 2. High-Definition Online Voice Stream (Bangla, Hindi, English full loud audio)
+        val playedOnline = playNeuralVoiceStream(text, lang)
+        if (playedOnline) return
+
+        // 3. Android Native TextToSpeech with smart language fallback
         withContext(Dispatchers.Main) {
-            if (ttsReady && textToSpeech != null) {
-                val loc = when (lang) {
-                    "bn" -> Locale("bn", "BD")
-                    "hi", "hinglish" -> Locale("hi", "IN")
-                    else -> Locale.ENGLISH
+            try {
+                val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                audioManager.mode = AudioManager.MODE_NORMAL
+                audioManager.isSpeakerphoneOn = true
+
+                if (ttsReady && textToSpeech != null) {
+                    val targetLocale = when (lang) {
+                        "bn" -> Locale("bn", "BD")
+                        "hi", "hinglish" -> Locale("hi", "IN")
+                        else -> Locale.ENGLISH
+                    }
+                    val avail = textToSpeech?.isLanguageAvailable(targetLocale)
+                    if (avail == TextToSpeech.LANG_AVAILABLE || avail == TextToSpeech.LANG_COUNTRY_AVAILABLE || avail == TextToSpeech.LANG_COUNTRY_VAR_AVAILABLE) {
+                        textToSpeech?.language = targetLocale
+                    } else {
+                        val hiAvail = textToSpeech?.isLanguageAvailable(Locale("hi", "IN"))
+                        if (hiAvail != null && hiAvail >= TextToSpeech.LANG_AVAILABLE) {
+                            textToSpeech?.language = Locale("hi", "IN")
+                        } else {
+                            textToSpeech?.language = Locale.US
+                        }
+                    }
+
+                    textToSpeech?.setPitch(voicePitch * voice.defaultPitch)
+                    textToSpeech?.setSpeechRate(voiceSpeed * voice.defaultSpeed)
+
+                    audioEngine?.setSpeakerPlaying(true)
+                    val params = Bundle().apply {
+                        putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
+                        putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
+                    }
+                    textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "alex_speech_id")
+                } else if (isSessionDesired && isUsingFallbackEngine) {
+                    delay(1000)
+                    startListeningContinuous()
                 }
-                textToSpeech?.language = loc
-                textToSpeech?.setPitch(voicePitch * voice.defaultPitch)
-                textToSpeech?.setSpeechRate(voiceSpeed * voice.defaultSpeed)
-                textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "alex_speech_id")
-            } else if (isSessionDesired && isUsingFallbackEngine) {
-                delay(1000)
-                startListeningContinuous()
-            } else {
-                // Idle standby
+            } catch (e: Exception) {
+                Log.e(tag, "Native TTS playback error", e)
+                audioEngine?.setSpeakerPlaying(false)
+                if (isSessionDesired && isUsingFallbackEngine) {
+                    delay(1000)
+                    startListeningContinuous()
+                }
             }
             Unit
         }
@@ -517,14 +643,25 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
         serviceScope.launch {
             val pcmAudio = settingsRepository.generateSpeechAudio(text, voiceName)
             if (pcmAudio != null && pcmAudio.isNotEmpty()) {
+                audioEngine?.setSpeakerPlaying(true)
                 audioEngine?.enqueuePlaybackChunk(pcmAudio)
                 return@launch
             }
+
+            val lang = _sessionState.value.language
+            val playedOnline = playNeuralVoiceStream(text, lang)
+            if (playedOnline) return@launch
+
             withContext(Dispatchers.Main) {
                 if (ttsReady && textToSpeech != null) {
+                    audioEngine?.setSpeakerPlaying(true)
                     textToSpeech?.setPitch(pitch)
                     textToSpeech?.setSpeechRate(speed)
-                    textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "sample_speech_id")
+                    val params = Bundle().apply {
+                        putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
+                        putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
+                    }
+                    textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "sample_speech_id")
                 }
             }
         }
@@ -595,6 +732,10 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
     }
 
     override fun onDestroy() {
+        try {
+            mediaPlayer?.release()
+            mediaPlayer = null
+        } catch (_: Exception) {}
         stopSession()
         audioEngine?.release()
         audioEngine = null
