@@ -143,14 +143,14 @@ class SettingsRepository(private val context: Context) {
             Keep your response conversational, concise (1-2 sentences), and friendly.
         """.trimIndent()
 
-        // 1. Try Gemini 3.5 Flash
+        // 1. Try Gemini 2.0 Flash
         if (geminiKey.isNotBlank()) {
-            val reply35 = queryGeminiModel("models/gemini-3.5-flash", geminiKey, systemMsg, userText)
-            if (reply35 != null) return@withContext reply35
+            val reply20 = queryGeminiModel("models/gemini-2.0-flash", geminiKey, systemMsg, userText)
+            if (reply20 != null) return@withContext reply20
 
-            // 2. Failover to Gemini Flash Latest
-            val replyFlash = queryGeminiModel("models/gemini-flash-latest", geminiKey, systemMsg, userText)
-            if (replyFlash != null) return@withContext replyFlash
+            // 2. Failover to Gemini 1.5 Flash
+            val reply15 = queryGeminiModel("models/gemini-1.5-flash", geminiKey, systemMsg, userText)
+            if (reply15 != null) return@withContext reply15
         }
 
         // 3. Failover to Groq API
@@ -159,13 +159,24 @@ class SettingsRepository(private val context: Context) {
             if (groqReply != null) return@withContext groqReply
         }
 
-        // 4. Offline Fallback
-        val lower = userText.lowercase()
+        // 4. Offline / Multi-Lingual Local Conversational Brain
+        val lower = userText.lowercase().trim()
         when {
-            lower.contains("youtube") || lower.contains("ইউটিউব") -> "YouTube khulchhi! Wait a second..."
+            lower.contains("kemon") || lower.contains("কেমন") -> "আমি খুব ভালো আছি, স্যার! আপনি কেমন আছেন? কী সাহায্য করতে পারি?"
+            lower.contains("tumi ke") || lower.contains("কে তুমি") || lower.contains("who are you") -> "আমি অ্যালেক্স (Alex AI), আপনার ব্যক্তিগত জার্ভিস এআই অ্যাসিস্ট্যান্ট!"
+            lower.contains("shunte") || lower.contains("শুনতে") || lower.contains("listen") || lower.contains("hear") -> "হ্যাঁ স্যার, আমি একদম পরিষ্কারভাবে আপনার কথা শুনছি! বলুন কী করতে হবে?"
+            lower.contains("ki korcho") || lower.contains("কী করছ") || lower.contains("what are you doing") -> "আপনার নির্দেশের অপেক্ষায় আছি, স্যার। যেকোনো অ্যাপ খোলা বা ডিভাইসের কাজ বলুন, এখনই করে দিচ্ছি!"
+            lower.contains("dhonnobad") || lower.contains("ধন্যবাদ") || lower.contains("thank") -> "আপনাকে অনেক ধন্যবাদ, স্যার! সর্বদা আপনার সেবায় আছি।"
+            lower.contains("hi") || lower.contains("hello") || lower.contains("hey") || lower.contains("হ্যালো") || lower.contains("হাই") -> "হ্যালো স্যার! আমি অনলাইন আছি। বলুন কী করতে হবে?"
+            lower.contains("youtube") || lower.contains("ইউটিউব") -> "YouTube khulchhi, Sir!"
             lower.contains("whatsapp") || lower.contains("হোয়াটসঅ্যাপ") -> "WhatsApp khulchhi!"
+            lower.contains("facebook") || lower.contains("ফেসবুক") -> "Facebook khulchhi!"
             lower.contains("call") || lower.contains("ফোন") -> "Dialer khulchhi!"
-            else -> "Ami apnar kotha shunte peyechhi. Bolo kibhabe sahajyo korbo?"
+            lower.contains("camera") || lower.contains("ক্যামেরা") -> "Camera khulchhi!"
+            lower.contains("torch") || lower.contains("টর্চ") || lower.contains("flashlight") -> "Flashlight toggle korchhi!"
+            language == "bn" -> "আমি আপনার কথা শুনতে পেয়েছি, স্যার। আপনার জন্য আর কী কাজ করতে পারি বলুন?"
+            language == "hi" || language == "hinglish" -> "Ji Sir, main aapki baat sun raha hoon. Batayein kya karna hai?"
+            else -> "I heard you, Sir. Alex is ready and listening in the background. How can I help you next?"
         }
     }
 

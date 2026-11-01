@@ -192,7 +192,7 @@ class GeminiLiveClient(
 
         val setupMsg = BidiClientMessage(
             setup = BidiSetup(
-                model = "models/gemini-2.5-flash-native-audio-latest",
+                model = "models/gemini-2.0-flash-exp",
                 generationConfig = BidiGenerationConfig(
                     responseModalities = listOf("AUDIO"),
                     speechConfig = BidiSpeechConfig(

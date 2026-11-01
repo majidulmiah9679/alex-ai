@@ -242,8 +242,14 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
                 connectionState = LiveConnectionState.CONNECTING
             )
 
-            // Connect to WebSocket; if quota 1011 or error occurs, onDisconnected/onError activates fallback
-            geminiClient?.connect(apiKey, personality, language)
+            // If API key is blank or not a standard Google AI Studio key, immediately start continuous voice engine
+            val cleanKey = apiKey.trim()
+            if (cleanKey.isBlank() || !cleanKey.startsWith("AIzaSy")) {
+                Log.d(tag, "Key is blank or not standard Gemini Studio key. Starting instant Dual Fallback Voice Engine.")
+                activateFallbackVoiceEngine()
+            } else {
+                geminiClient?.connect(cleanKey, personality, language)
+            }
         }
     }
 
@@ -314,9 +320,10 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, localeTag)
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, localeTag)
-                    putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, localeTag)
+                    putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, false)
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+                    putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("bn-BD", "en-US", "hi-IN"))
                 }
 
                 speechRecognizer?.setRecognitionListener(object : RecognitionListener {
@@ -341,10 +348,12 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
 
                     override fun onError(error: Int) {
                         _sessionState.value = _sessionState.value.copy(micAmplitude = 0f)
-                        // Anti-Self-Talk: Do NOT restart listening if Alex is speaking!
+                        Log.d(tag, "SpeechRecognizer error: $error. Resetting instance.")
+                        stopSpeechRecognizer()
+                        // Continuous background listening recovery
                         if (isSessionDesired && isUsingFallbackEngine && audioEngine?.isSpeakerPlaying() == false) {
                             serviceScope.launch {
-                                delay(800)
+                                delay(350)
                                 if (audioEngine?.isSpeakerPlaying() == false) {
                                     startListeningContinuous()
                                 }
@@ -363,8 +372,9 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
                             val heard = spokenText.lowercase().trim()
                             if (lastModel.isNotBlank() && (lastModel.contains(heard) || heard.contains(lastModel))) {
                                 Log.w(tag, "Self-speech echo detected and discarded: '$spokenText'")
+                                stopSpeechRecognizer()
                                 serviceScope.launch {
-                                    delay(800)
+                                    delay(500)
                                     if (audioEngine?.isSpeakerPlaying() == false) {
                                         startListeningContinuous()
                                     }
@@ -372,11 +382,15 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
                                 return
                             }
 
-                            // Legitimate user speech: stop speech recognizer immediately
+                            // Legitimate user speech: stop speech recognizer immediately & process
                             stopSpeechRecognizer()
                             processSpokenVoiceInput(spokenText)
                         } else if (isSessionDesired && isUsingFallbackEngine && audioEngine?.isSpeakerPlaying() == false) {
-                            startListeningContinuous()
+                            stopSpeechRecognizer()
+                            serviceScope.launch {
+                                delay(300)
+                                startListeningContinuous()
+                            }
                         }
                     }
 
@@ -680,6 +694,22 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
                 audioManager.mode = AudioManager.MODE_NORMAL
                 audioManager.isSpeakerphoneOn = true
 
+                // Ensure volume is audible
+                val currentVol = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                if (currentVol < maxVol / 3) {
+                    audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (maxVol * 0.75).toInt(), 0)
+                }
+
+                // If TTS is still initializing on startup, wait up to 1 second
+                if (!ttsReady || textToSpeech == null) {
+                    var waited = 0
+                    while ((!ttsReady || textToSpeech == null) && waited < 10) {
+                        delay(100)
+                        waited++
+                    }
+                }
+
                 if (ttsReady && textToSpeech != null) {
                     val targetLocale = when (lang) {
                         "bn" -> Locale("bn", "BD")
@@ -708,14 +738,14 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
                     }
                     textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "alex_speech_id")
                 } else if (isSessionDesired && isUsingFallbackEngine) {
-                    delay(1000)
+                    delay(500)
                     startListeningContinuous()
                 }
             } catch (e: Exception) {
                 Log.e(tag, "Native TTS playback error", e)
                 audioEngine?.setSpeakerPlaying(false)
                 if (isSessionDesired && isUsingFallbackEngine) {
-                    delay(1000)
+                    delay(500)
                     startListeningContinuous()
                 }
             }
