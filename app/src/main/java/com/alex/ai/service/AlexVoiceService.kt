@@ -460,7 +460,10 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
             } else if (isSessionDesired && isUsingFallbackEngine) {
                 delay(1000)
                 startListeningContinuous()
+            } else {
+                // Idle standby
             }
+            Unit
         }
     }
 
