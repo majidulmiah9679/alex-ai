@@ -39,8 +39,8 @@ import kotlinx.coroutines.launch
 enum class ScreenTab(val title: String, val icon: ImageVector) {
     HOME("Alex 3D", Icons.Default.GraphicEq),
     CHAT("Chat", Icons.Default.ChatBubbleOutline),
+    AUTOMATION("JARVIS 280+", Icons.Default.Bolt),
     FORGE("3D Forge", Icons.Default.AutoAwesome),
-    PERSONAS("Personas", Icons.Default.Face),
     SETTINGS("Settings", Icons.Default.Settings)
 }
 
@@ -92,6 +92,9 @@ class MainActivity : ComponentActivity() {
                 val edgeGlowEnabled by settingsRepo.edgeGlowFlow.collectAsState(initial = true)
                 var apiKey by remember { mutableStateOf(settingsRepo.getApiKey()) }
                 var groqApiKey by remember { mutableStateOf(settingsRepo.getGroqApiKey()) }
+                val currentVoiceId by settingsRepo.voiceIdFlow.collectAsState(initial = "female_friday")
+                val voicePitch by settingsRepo.voicePitchFlow.collectAsState(initial = 1.0f)
+                val voiceSpeed by settingsRepo.voiceSpeedFlow.collectAsState(initial = 1.0f)
                 val phoneActionExecutor = remember { com.alex.ai.actions.PhoneActionExecutor(applicationContext) }
 
                 val personality = remember(currentPersonalityId) {
@@ -201,7 +204,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                     },
                                     onOpenPersonalityPicker = {
-                                        currentTab = ScreenTab.PERSONAS
+                                        currentTab = ScreenTab.AUTOMATION
                                     }
                                 )
                             }
@@ -262,13 +265,66 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
 
-                            ScreenTab.PERSONAS -> {
-                                PersonalityScreen(
-                                    currentPersonality = personality,
-                                    currentLanguage = currentLanguage,
-                                    onSelectPersonality = { newPersona ->
-                                        scope.launch { settingsRepo.setPersonality(newPersona.id) }
-                                    }
+                            ScreenTab.AUTOMATION -> {
+                                AutomationScreen(
+                                    currentVoiceId = currentVoiceId,
+                                    onSelectVoice = { newVoiceId ->
+                                        scope.launch { settingsRepo.setVoiceId(newVoiceId) }
+                                    },
+                                    onTestVoiceSample = { voice ->
+                                        val greeting = when (currentLanguage) {
+                                            "bn" -> voice.greetingBn
+                                            "hi", "hinglish" -> voice.greetingHi
+                                            else -> voice.greetingEn
+                                        }
+                                        voiceService?.speakVoiceSample(
+                                            greeting,
+                                            voice.geminiVoice,
+                                            voice.defaultPitch * voicePitch,
+                                            voice.defaultSpeed * voiceSpeed
+                                        )
+                                    },
+                                    voicePitch = voicePitch,
+                                    onPitchChange = { scope.launch { settingsRepo.setVoicePitch(it) } },
+                                    voiceSpeed = voiceSpeed,
+                                    onSpeedChange = { scope.launch { settingsRepo.setVoiceSpeed(it) } },
+                                    onExecuteProtocol = { proto ->
+                                        val res = when (proto.id) {
+                                            "app_youtube" -> phoneActionExecutor.openApp("youtube")
+                                            "app_whatsapp", "comm_wa_direct" -> phoneActionExecutor.openWhatsApp()
+                                            "app_camera", "media_cam_video", "media_cam_selfie" -> phoneActionExecutor.openApp("camera")
+                                            "hw_torch_on" -> phoneActionExecutor.toggleFlashlight(true)
+                                            "hw_torch_off" -> phoneActionExecutor.toggleFlashlight(false)
+                                            "hw_vol_up" -> phoneActionExecutor.controlVolume("up")
+                                            "hw_vol_down" -> phoneActionExecutor.controlVolume("down")
+                                            "hw_vol_max" -> phoneActionExecutor.controlVolume("max")
+                                            "hw_vol_mute" -> phoneActionExecutor.controlVolume("mute")
+                                            "hw_wifi_settings" -> phoneActionExecutor.openSettings("wifi")
+                                            "hw_bt_settings" -> phoneActionExecutor.openSettings("bluetooth")
+                                            "hw_display_settings" -> phoneActionExecutor.openSettings("display")
+                                            "hw_sound_settings" -> phoneActionExecutor.openSettings("sound")
+                                            "hw_accessibility_settings" -> phoneActionExecutor.openSettings("accessibility")
+                                            "diag_battery" -> phoneActionExecutor.getBatteryStatus()
+                                            "diag_ram" -> phoneActionExecutor.getRamStatus()
+                                            "diag_storage" -> phoneActionExecutor.getStorageStatus()
+                                            "diag_device_info" -> phoneActionExecutor.getDeviceSpecs()
+                                            "prod_alarm" -> phoneActionExecutor.setAlarm(7, 0, "Alex Alarm")
+                                            "prod_timer" -> phoneActionExecutor.setTimer(300, "Alex Timer")
+                                            "nav_dest", "nav_restaurant", "nav_hospital", "nav_fuel", "nav_atm" -> phoneActionExecutor.navigateMaps(proto.voiceCommandExampleEn)
+                                            "media_yt_search" -> phoneActionExecutor.searchYouTube("Trending Music")
+                                            "forge_start" -> {
+                                                com.alex.ai.forge.ForgeController.instance.startWebsiteBuild("Modern 3D Showcase")
+                                                currentTab = ScreenTab.FORGE
+                                                com.alex.ai.actions.ActionResult(true, "3D Forge launched!")
+                                            }
+                                            else -> phoneActionExecutor.openApp(proto.name)
+                                        }
+                                        res.message
+                                    },
+                                    batteryStatus = remember { phoneActionExecutor.getBatteryStatus().message },
+                                    ramStatus = remember { phoneActionExecutor.getRamStatus().message },
+                                    storageStatus = remember { phoneActionExecutor.getStorageStatus().message },
+                                    deviceSpecs = remember { phoneActionExecutor.getDeviceSpecs().message }
                                 )
                             }
 
@@ -290,6 +346,7 @@ class MainActivity : ComponentActivity() {
                                     onValidateGroqApiKey = { key ->
                                         settingsRepo.validateGroqApiKey(key)
                                     },
+                                    onOpenAutomationHub = { currentTab = ScreenTab.AUTOMATION },
                                     echoCancellerEnabled = echoCancellerEnabled,
                                     onToggleEchoCanceller = { scope.launch { settingsRepo.setEchoCanceller(it) } },
                                     noiseSuppressorEnabled = noiseSuppressorEnabled,

@@ -1,10 +1,13 @@
 package com.alex.ai.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import kotlinx.coroutines.launch
@@ -27,6 +30,7 @@ fun SettingsScreen(
     currentGroqApiKey: String = "",
     onSaveGroqApiKey: (String) -> Unit = {},
     onValidateGroqApiKey: suspend (String) -> Pair<Boolean, String> = { Pair(true, "Groq active") },
+    onOpenAutomationHub: () -> Unit = {},
     echoCancellerEnabled: Boolean,
     onToggleEchoCanceller: (Boolean) -> Unit,
     noiseSuppressorEnabled: Boolean,
@@ -107,6 +111,54 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // JARVIS Automation Hub Banner
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color(0xFF1E2856),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MarigoldAccent),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenAutomationHub() }
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("⚡", fontSize = 28.sp)
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "JARVIS AUTOMATION HUB",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF00E676).copy(alpha = 0.2f),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E676))
+                            ) {
+                                Text(
+                                    text = "280+ FEATURES",
+                                    color = Color(0xFF00E676),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = "10 Human Voices (5 Female, 5 Male) + 280+ Automation Protocols & Telemetry",
+                            color = Color(0xFF8B94B2),
+                            fontSize = 11.sp
+                        )
+                    }
+                    Icon(Icons.Default.ChevronRight, contentDescription = null, tint = MarigoldAccent)
+                }
+            }
+
             // Gemini API Key Vault
             Surface(
                 shape = RoundedCornerShape(16.dp),

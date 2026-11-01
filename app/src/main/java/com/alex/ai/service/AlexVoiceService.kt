@@ -383,7 +383,7 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
             when {
                 lower.contains("youtube") || lower.contains("ইউটিউব") -> {
                     val res = phoneActionExecutor.openApp("youtube")
-                    actionMsg = if (res.success) "YouTube khulchhi!" else res.message
+                    actionMsg = if (res.success) "YouTube khulchhi, Sir!" else res.message
                 }
                 lower.contains("whatsapp") || lower.contains("হোয়াটসঅ্যাপ") -> {
                     val res = phoneActionExecutor.openWhatsApp()
@@ -396,6 +396,47 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
                 lower.contains("flashlight") || lower.contains("torch") || lower.contains("টর্চ") -> {
                     val enable = !lower.contains("off") && !lower.contains("বন্ধ")
                     val res = phoneActionExecutor.toggleFlashlight(enable)
+                    actionMsg = res.message
+                }
+                lower.contains("battery") || lower.contains("ব্যাটারি") || lower.contains("charge") -> {
+                    val res = phoneActionExecutor.getBatteryStatus()
+                    actionMsg = res.message
+                }
+                lower.contains("ram") || lower.contains("র‍্যাম") || lower.contains("memory") -> {
+                    val res = phoneActionExecutor.getRamStatus()
+                    actionMsg = res.message
+                }
+                lower.contains("storage") || lower.contains("স্টোরেজ") || lower.contains("space") -> {
+                    val res = phoneActionExecutor.getStorageStatus()
+                    actionMsg = res.message
+                }
+                lower.contains("device info") || lower.contains("specs") || lower.contains("phone details") -> {
+                    val res = phoneActionExecutor.getDeviceSpecs()
+                    actionMsg = res.message
+                }
+                lower.contains("alarm") || lower.contains("অ্যালার্ম") -> {
+                    val res = phoneActionExecutor.setAlarm(7, 0, "Alex JARVIS Alarm")
+                    actionMsg = res.message
+                }
+                lower.contains("timer") || lower.contains("টাইমার") -> {
+                    val res = phoneActionExecutor.setTimer(300, "Alex JARVIS Timer")
+                    actionMsg = res.message
+                }
+                lower.contains("volume") || lower.contains("ভলিউম") || lower.contains("awaaz") -> {
+                    val dir = if (lower.contains("down") || lower.contains("কম")) "down" else if (lower.contains("mute")) "mute" else if (lower.contains("full") || lower.contains("max")) "max" else "up"
+                    val res = phoneActionExecutor.controlVolume(dir)
+                    actionMsg = res.message
+                }
+                lower.contains("wifi") || lower.contains("ওয়াইফাই") -> {
+                    val res = phoneActionExecutor.openSettings("wifi")
+                    actionMsg = res.message
+                }
+                lower.contains("bluetooth") || lower.contains("ব্লুটুথ") -> {
+                    val res = phoneActionExecutor.openSettings("bluetooth")
+                    actionMsg = res.message
+                }
+                lower.contains("navigate") || lower.contains("hospital") || lower.contains("restaurant") || lower.contains("ম্যাপ") -> {
+                    val res = phoneActionExecutor.navigateMaps(spokenText)
                     actionMsg = res.message
                 }
                 lower.contains("settings") || lower.contains("সেটিংস") -> {
@@ -424,17 +465,20 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
 
             _sessionState.value = _sessionState.value.copy(lastModelText = replyText)
 
-            // 3. Speak reply aloud
+            // 3. Speak reply aloud using selected JARVIS voice
             speakResponse(replyText)
         }
     }
 
     private suspend fun speakResponse(text: String) {
-        val personality = _sessionState.value.personality
+        val selectedVoiceId = settingsRepository.voiceIdFlow.first()
+        val voice = com.alex.ai.domain.JarvisVoiceRegistry.getById(selectedVoiceId)
+        val voicePitch = settingsRepository.voicePitchFlow.first()
+        val voiceSpeed = settingsRepository.voiceSpeedFlow.first()
         val lang = _sessionState.value.language
 
         // Attempt Gemini 24kHz Studio PCM TTS first
-        val pcmAudio = settingsRepository.generateSpeechAudio(text, personality.voiceName)
+        val pcmAudio = settingsRepository.generateSpeechAudio(text, voice.geminiVoice)
         if (pcmAudio != null && pcmAudio.isNotEmpty()) {
             _sessionState.value = _sessionState.value.copy(speakerAmplitude = 0.7f)
             audioEngine?.enqueuePlaybackChunk(pcmAudio)
@@ -447,7 +491,7 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
             return
         }
 
-        // Seamless fallback to Android Native TextToSpeech
+        // Seamless fallback to Android Native TextToSpeech with human pitch and speed
         withContext(Dispatchers.Main) {
             if (ttsReady && textToSpeech != null) {
                 val loc = when (lang) {
@@ -456,6 +500,8 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
                     else -> Locale.ENGLISH
                 }
                 textToSpeech?.language = loc
+                textToSpeech?.setPitch(voicePitch * voice.defaultPitch)
+                textToSpeech?.setSpeechRate(voiceSpeed * voice.defaultSpeed)
                 textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "alex_speech_id")
             } else if (isSessionDesired && isUsingFallbackEngine) {
                 delay(1000)
@@ -464,6 +510,23 @@ class AlexVoiceService : Service(), TextToSpeech.OnInitListener {
                 // Idle standby
             }
             Unit
+        }
+    }
+
+    fun speakVoiceSample(text: String, voiceName: String, pitch: Float = 1.0f, speed: Float = 1.0f) {
+        serviceScope.launch {
+            val pcmAudio = settingsRepository.generateSpeechAudio(text, voiceName)
+            if (pcmAudio != null && pcmAudio.isNotEmpty()) {
+                audioEngine?.enqueuePlaybackChunk(pcmAudio)
+                return@launch
+            }
+            withContext(Dispatchers.Main) {
+                if (ttsReady && textToSpeech != null) {
+                    textToSpeech?.setPitch(pitch)
+                    textToSpeech?.setSpeechRate(speed)
+                    textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "sample_speech_id")
+                }
+            }
         }
     }
 

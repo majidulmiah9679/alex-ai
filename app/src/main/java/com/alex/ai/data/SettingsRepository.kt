@@ -50,6 +50,9 @@ class SettingsRepository(private val context: Context) {
         private const val SECURE_API_KEY = "gemini_live_api_key"
         private const val SECURE_GROQ_KEY = "groq_api_key"
         private const val PRESET_KEY_B64 = "QVEuQWI4Uk42SVU1Um90aVNzQVBoYnZuaF96NzFzM2ZVZ2JPb2lCTE1YU1BKUUR5cFJDbFE="
+        private val KEY_SELECTED_VOICE = stringPreferencesKey("selected_voice_id")
+        private val KEY_VOICE_PITCH = androidx.datastore.preferences.core.floatPreferencesKey("selected_voice_pitch")
+        private val KEY_VOICE_SPEED = androidx.datastore.preferences.core.floatPreferencesKey("selected_voice_speed")
     }
 
     // --- Secure Gemini API Key ---
@@ -343,5 +346,30 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setEdgeGlow(enabled: Boolean) {
         context.dataStore.edit { it[KEY_EDGE_GLOW] = enabled }
+    }
+
+    // --- JARVIS Human Voice Customization (5 Female & 5 Male) ---
+    val voiceIdFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_SELECTED_VOICE] ?: "female_friday"
+    }
+
+    val voicePitchFlow: Flow<Float> = context.dataStore.data.map { prefs ->
+        prefs[KEY_VOICE_PITCH] ?: 1.0f
+    }
+
+    val voiceSpeedFlow: Flow<Float> = context.dataStore.data.map { prefs ->
+        prefs[KEY_VOICE_SPEED] ?: 1.0f
+    }
+
+    suspend fun setVoiceId(voiceId: String) {
+        context.dataStore.edit { it[KEY_SELECTED_VOICE] = voiceId }
+    }
+
+    suspend fun setVoicePitch(pitch: Float) {
+        context.dataStore.edit { it[KEY_VOICE_PITCH] = pitch }
+    }
+
+    suspend fun setVoiceSpeed(speed: Float) {
+        context.dataStore.edit { it[KEY_VOICE_SPEED] = speed }
     }
 }
